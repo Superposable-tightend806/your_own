@@ -179,33 +179,65 @@ It is for people who want:
 
 ## Interface Examples
 
+<table>
+<tr>
+<td width="50%">
+
 ### Chat
 
 ![Chat UI](docs/example/chat.png)
+
+</td>
+<td width="50%">
 
 ### Dashboard
 
 ![Dashboard](docs/example/dashboard.png)
 
+</td>
+</tr>
+<tr>
+<td width="50%">
+
 ### Settings
 
 ![Settings](docs/example/settings.png)
+
+</td>
+<td width="50%">
 
 ### Skills — Agentic Pipeline
 
 ![Skills](docs/example/skills.png)
 
+</td>
+</tr>
+<tr>
+<td width="50%">
+
 ### Saved Facts — ChromaDB Memory
 
 ![Memory Facts](docs/example/memory.png)
+
+</td>
+<td width="50%">
 
 ### Loading Screen
 
 ![Loading Screen](docs/example/loading_screen.png)
 
+</td>
+</tr>
+<tr>
+<td colspan="2">
+
 ### ChatGPT Export Flow
 
 ![Export ChatGPT Data](docs/example/export_chatgpt_data.png)
+
+</td>
+</tr>
+</table>
 
 ## Roadmap
 
