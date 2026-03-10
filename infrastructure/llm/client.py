@@ -6,6 +6,7 @@ Supports:
 - Web search via OpenRouter native :online suffix — works for any model,
   no tool calls or third-party search needed
 - SSE streaming: yields text chunks as they arrive
+- Image generation via modalities: ["image", "text"] (non-streaming call)
 """
 
 import base64
@@ -171,3 +172,113 @@ class LLMClient:
                     chunk = delta.get("content")
                     if chunk:
                         yield chunk
+
+    async def generate_image(self, prompt: str, model: str) -> str | None:
+        """
+        Non-streaming image generation via OpenRouter.
+        Returns a base64 data URL string (data:image/png;base64,...) or None on failure.
+        """
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "modalities": ["image", "text"],
+            "stream": False,
+        }
+        logger.info("[LLMClient] generate_image model=%s prompt=%s", model, prompt[:120])
+
+        # Image responses contain large base64 payloads (~2MB). Use a generous
+        # timeout and read the raw bytes first to avoid TransferEncodingError.
+        timeout = aiohttp.ClientTimeout(total=300)
+        connector = aiohttp.TCPConnector(force_close=True)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.post(
+                f"{OPENROUTER_BASE}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            ) as resp:
+                logger.info("[LLMClient] generate_image status=%d model=%s", resp.status, model)
+                if resp.status != 200:
+                    error_body = await resp.text()
+                    logger.error("[LLMClient] generate_image error %d: %s", resp.status, error_body)
+                    return None
+
+                try:
+                    # Read full bytes before JSON-parsing to avoid chunked-encoding truncation
+                    raw = await resp.read()
+                    body = json.loads(raw)
+                except Exception as exc:
+                    logger.error("[LLMClient] generate_image JSON parse error: %s", exc)
+                    return None
+
+        # Log full body at DEBUG level so we can diagnose unexpected shapes
+        import json as _json
+        _body_preview = _json.dumps(body)[:1200]
+        logger.info("[LLMClient] generate_image response body (truncated): %s", _body_preview)
+
+        choices = body.get("choices") or []
+        if not choices:
+            logger.warning("[LLMClient] generate_image: no choices in response body=%s", _body_preview)
+            return None
+
+        choice = choices[0]
+        message = choice.get("message") or {}
+        content = message.get("content")
+
+        # ── Shape 1: content is a list of typed parts ──────────────────────────
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                t = part.get("type", "")
+                # {"type": "image_url", "image_url": {"url": "data:..."}}
+                if t == "image_url":
+                    url = (part.get("image_url") or {}).get("url", "")
+                    if url:
+                        logger.info("[LLMClient] generate_image: found image_url part")
+                        return url
+                # {"type": "image", "data": "base64...", "media_type": "image/png"}
+                if t == "image":
+                    data = part.get("data") or part.get("source", {}).get("data", "")
+                    if data:
+                        logger.info("[LLMClient] generate_image: found image part")
+                        return f"data:image/png;base64,{data}"
+
+        # ── Shape 2: content is a plain string (data URL or https URL) ─────────
+        if isinstance(content, str) and content.strip():
+            stripped = content.strip()
+            if stripped.startswith("data:") or stripped.startswith("http"):
+                logger.info("[LLMClient] generate_image: found image in string content")
+                return stripped
+
+        # ── Shape 3: message-level "images" array (OpenRouter docs format) ─────
+        # choices[0].message.images[0]['image_url']['url']
+        images = message.get("images") or []
+        if images:
+            first = images[0]
+            if isinstance(first, dict):
+                url = (first.get("image_url") or {}).get("url") or first.get("url", "")
+                if url:
+                    logger.info("[LLMClient] generate_image: found image in message.images")
+                    return url
+            if isinstance(first, str) and first.strip():
+                return first.strip()
+
+        # ── Shape 4: top-level "data" array (DALL-E style) ────────────────────
+        data_list = body.get("data") or []
+        if data_list:
+            first = data_list[0]
+            if isinstance(first, dict):
+                url = first.get("url") or first.get("b64_json")
+                if url:
+                    logger.info("[LLMClient] generate_image: found image in top-level data[]")
+                    if not url.startswith("http") and not url.startswith("data:"):
+                        url = f"data:image/png;base64,{url}"
+                    return url
+
+        logger.warning(
+            "[LLMClient] generate_image: could not find image in response. "
+            "Full body (truncated): %s",
+            _body_preview,
+        )
+        return None
+

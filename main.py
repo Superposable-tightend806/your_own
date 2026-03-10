@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from infrastructure.logging.logger import setup_logger
 from infrastructure.startup import preload_models, startup_progress
@@ -39,15 +41,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.chat import router as chat_router                  # noqa: E402
-from api.memory import router as memory_router              # noqa: E402
-from api.startup_api import router as startup_router        # noqa: E402
-from api.chroma_memory import router as chroma_router       # noqa: E402
+from api.chat import router as chat_router, _GENERATED_IMAGES_DIR  # noqa: E402
+from api.memory import router as memory_router                      # noqa: E402
+from api.startup_api import router as startup_router                # noqa: E402
+from api.chroma_memory import router as chroma_router               # noqa: E402
 
 app.include_router(chat_router)
 app.include_router(memory_router)
 app.include_router(startup_router)
 app.include_router(chroma_router)
+
+# Serve generated images as static files
+app.mount("/api/generated_images", StaticFiles(directory=str(_GENERATED_IMAGES_DIR)), name="generated_images")
 
 
 @app.get("/")

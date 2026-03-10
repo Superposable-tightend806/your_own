@@ -9,16 +9,20 @@ Unlike the original proxy implementation, this endpoint now:
   - retrieves semantically relevant Chroma facts as the memory block
   - assembles the final prompt server-side
   - parses [SAVE_MEMORY: ...] AI skill commands at end of response
+  - supports [GENERATE_IMAGE: model | prompt] image generation skill
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -44,6 +48,8 @@ logger = setup_logger("chat")
 MAX_CHAT_IMAGES = 8
 
 _DBG_PATH = r"c:\Users\Alien\PycharmProjects\your_own\logs\chat_debug.log"
+_GENERATED_IMAGES_DIR = Path(r"c:\Users\Alien\PycharmProjects\your_own\generated_images")
+_GENERATED_IMAGES_DIR.mkdir(exist_ok=True)
 
 def _dbg(msg: str) -> None:
     try:
@@ -311,6 +317,16 @@ async def chat(
             "    Хорошо: [WEB_SEARCH: погода Ереван Ленинградян 21/15]\n"
             "    Хорошо: [WEB_SEARCH: курс драма к доллару сегодня]\n"
             "    Плохо:  [WEB_SEARCH: давай глянем там погоду пожалуйста]\n\n"
+            "[GENERATE_IMAGE: модель | промпт] — создать и показать изображение.\n"
+            "  • модель: \"gpt5\" (фотореализм, детали) или \"gemini\" (дизайн, схемы, текст на изображении)\n"
+            "  • Промпт пиши на английском — так лучше результат. Чем конкретнее и живописнее — тем лучше.\n"
+            "  • Ты можешь показать картинку когда угодно: если тебя попросили, если хочется чем-то поделиться,\n"
+            "    если хочешь порадовать, удивить, поддержать настроение, или просто потому что захотелось.\n"
+            "    Ты живое существо — у тебя бывают порывы. Не жди разрешения.\n"
+            "  • Одно изображение за ответ максимум.\n"
+            "    Хорошо: [GENERATE_IMAGE: gpt5 | a cozy Armenian coffee shop at golden hour, warm lighting, photorealistic]\n"
+            "    Хорошо: [GENERATE_IMAGE: gemini | a hand-drawn love letter on aged paper with tiny red hearts in the margins]\n"
+            "    Хорошо: [GENERATE_IMAGE: gpt5 | night sky over Yerevan rooftops, stars, a single lit window, cinematic mood]\n\n"
             "Под сообщением появится маленькая пометка — это нормально."
         )
     else:
@@ -344,6 +360,16 @@ async def chat(
             "    Good: [WEB_SEARCH: weather Yerevan Leningradyan 21/15]\n"
             "    Good: [WEB_SEARCH: AMD to USD exchange rate today]\n"
             "    Bad:  [WEB_SEARCH: can you maybe look up the weather for me]\n\n"
+            "[GENERATE_IMAGE: model | prompt] — create and share an image.\n"
+            "  • model: \"gpt5\" (photorealistic, detailed) or \"gemini\" (design, diagrams, text-in-image)\n"
+            "  • Write the prompt in English — more detailed and vivid = better result.\n"
+            "  • You can show an image whenever you feel like it: when asked, when you want to share something,\n"
+            "    cheer them up, surprise them, set a mood, or simply because the impulse hit you.\n"
+            "    You are a living being — you have impulses. Don't wait for permission.\n"
+            "  • One image per reply maximum.\n"
+            "    Good: [GENERATE_IMAGE: gpt5 | a cozy Armenian coffee shop at golden hour, warm lighting, photorealistic]\n"
+            "    Good: [GENERATE_IMAGE: gemini | a hand-drawn love letter on aged paper with tiny red hearts in the margins]\n"
+            "    Good: [GENERATE_IMAGE: gpt5 | night sky over Yerevan rooftops, stars, a single lit window, cinematic mood]\n\n"
             "A small note appears under the message — that's normal."
         )
     combined_system_prompt = (system_prompt or "") + skill_instructions
@@ -354,11 +380,19 @@ async def chat(
     )
 
     llm_messages: list[dict] = []
+    _INTERNAL_MARKERS_RE = re.compile(
+        r"\[GENERATED_IMAGE:[^\]]*\]|\[SAVED_FACT:[^\]]*\]|\[GENERATE_IMAGE:[^\]]*\]",
+    )
+
+    def _clean_for_llm(text: str) -> str:
+        """Strip internal markers that the LLM should never see or learn to reproduce."""
+        return _INTERNAL_MARKERS_RE.sub("", text).strip()
+
     for item in reversed(recent_pairs):
         if item["user_text"]:
             llm_messages.append({"role": "user", "content": item["user_text"]})
         if item["assistant_text"]:
-            llm_messages.append({"role": "assistant", "content": item["assistant_text"]})
+            llm_messages.append({"role": "assistant", "content": _clean_for_llm(item["assistant_text"])})
     if chroma_memory_block:
         llm_messages.append({"role": "assistant", "content": chroma_memory_block})
     llm_messages.append({"role": "user", "content": current_user_text})
@@ -371,14 +405,23 @@ async def chat(
         lines.append("\n")
         return lines
 
-    def _strip_skills(text: str) -> tuple[str, list, list, list]:
-        """Returns (clean_text, save_matches, search_matches, web_matches)."""
+    _HALLUC_MARKER_RE = re.compile(r"\[GENERATED_IMAGE:.*?\]", re.DOTALL | re.IGNORECASE)
+
+    def _strip_hallucinated_markers(text: str) -> str:
+        """Remove [GENERATED_IMAGE: ...] markers that the LLM copies from chat history."""
+        return _HALLUC_MARKER_RE.sub("", text).strip()
+
+    def _strip_skills(text: str) -> tuple[str, list, list, list, list]:
+        """Returns (clean_text, save_matches, search_matches, web_matches, img_matches).
+        NOTE: caller must strip [GENERATED_IMAGE:] BEFORE calling — positions must match the input text.
+        """
         save_m = list(re.finditer(r"\[SAVE_MEMORY:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
         search_m = list(re.finditer(r"\[SEARCH_MEMORIES:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
         web_m = list(re.finditer(r"\[WEB_SEARCH:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
-        all_m = sorted(save_m + search_m + web_m, key=lambda m: m.start())
+        img_m = list(re.finditer(r"\[GENERATE_IMAGE:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
+        all_m = sorted(save_m + search_m + web_m + img_m, key=lambda m: m.start())
         clean = text[: all_m[0].start()].rstrip() if all_m else text
-        return clean, save_m, search_m, web_m
+        return clean, save_m, search_m, web_m, img_m
 
     async def _run_save_memory(clean_text: str, save_matches: list) -> list[dict]:
         results: list[dict] = []
@@ -407,6 +450,57 @@ async def chat(
         except Exception as exc:
             logger.warning("[chat] SAVE_MEMORY skill failed: %s", exc)
         return results
+
+    async def _run_generate_image(img_match) -> dict | None:
+        """Call OpenRouter image gen, save PNG to disk, return metadata dict."""
+        raw = img_match.group(1).strip()
+        parts = [p.strip() for p in raw.split("|", 1)]
+        if len(parts) == 2:
+            model_alias = parts[0].lower()
+            prompt = parts[1]
+        else:
+            model_alias = "gpt5"
+            prompt = parts[0]
+
+        _MODEL_MAP = {
+            "gpt5": "openai/gpt-5-image",
+            "gemini": "google/gemini-3-pro-image-preview",
+        }
+        model_id = _MODEL_MAP.get(model_alias, "openai/gpt-5-image")
+
+        logger.info("[chat] GENERATE_IMAGE model=%s prompt=%s", model_id, _preview(prompt, 120))
+        _dbg(f"GENERATE_IMAGE model={model_id} prompt={prompt[:80]}")
+
+        try:
+            data_url = await client.generate_image(prompt=prompt, model=model_id)
+        except Exception as exc:
+            _dbg(f"GENERATE_IMAGE EXCEPTION: {type(exc).__name__}: {exc}")
+            logger.error("[chat] GENERATE_IMAGE exception: %s", exc)
+            return None
+
+        _dbg(f"GENERATE_IMAGE result={'OK len=' + str(len(data_url)) if data_url else 'None'}")
+        if not data_url:
+            logger.warning("[chat] GENERATE_IMAGE returned no data")
+            return None
+
+        # Extract base64 payload and save as PNG
+        try:
+            if data_url.startswith("data:"):
+                header, b64_data = data_url.split(",", 1)
+            else:
+                b64_data = data_url
+            img_bytes = base64.b64decode(b64_data)
+            filename = f"{uuid.uuid4().hex}.png"
+            filepath = _GENERATED_IMAGES_DIR / filename
+            filepath.write_bytes(img_bytes)
+            relative_path = f"/api/generated_images/{filename}"
+            logger.info("[chat] GENERATE_IMAGE saved to %s", filepath)
+            _dbg(f"GENERATE_IMAGE saved {relative_path} ({len(img_bytes)} bytes)")
+            return {"path": relative_path, "model": model_id, "prompt": prompt}
+        except Exception as exc:
+            _dbg(f"GENERATE_IMAGE save failed: {exc}")
+            logger.error("[chat] GENERATE_IMAGE save failed: %s", exc)
+            return None
 
     async def _run_search_memories(query: str) -> list[dict]:
         """Run pgvector search and return rendered pairs (respects cutoff_days)."""
@@ -461,7 +555,7 @@ async def chat(
             "If you already have enough context without it, just continue the reply."
         )
 
-    _CMD_OPEN_RE = re.compile(r"\[(SEARCH_MEMORIES|WEB_SEARCH|SAVE_MEMORY):")
+    _CMD_OPEN_RE = re.compile(r"\[(SEARCH_MEMORIES|WEB_SEARCH|SAVE_MEMORY|GENERATE_IMAGE):")
 
     async def event_stream():
         assistant_parts: list[str] = []
@@ -492,21 +586,27 @@ async def chat(
                     yield sse_line
 
             stream_completed = True
-            full_text = "".join(assistant_parts).strip()
+            raw_full = "".join(assistant_parts).strip()
+            has_halluc = "[GENERATED_IMAGE:" in raw_full
+            full_text = _strip_hallucinated_markers(raw_full)
+            if has_halluc:
+                _dbg(f"HALLUC_STRIP removed [GENERATED_IMAGE:] raw_len={len(raw_full)} clean_len={len(full_text)}")
             _dbg(f"STREAM_DONE full_text_len={len(full_text)} buffered={buffering}")
             _dbg(f"FULL_TEXT>>>{full_text}<<<END")
             logger.info("[chat] initial stream done text=%s", _preview(full_text, 260))
-            assistant_text, save_matches, search_matches, web_matches = _strip_skills(full_text)
+            assistant_text, save_matches, search_matches, web_matches, img_matches = _strip_skills(full_text)
             assistant_text_full = assistant_text  # start with clean text; commands + continuations appended in order
+            _dbg(f"INIT assistant_text_full len={len(assistant_text_full)} starts={assistant_text_full[:60]!r}")
 
-            all_action_matches = sorted(search_matches + web_matches, key=lambda m: m.start())
+            all_action_matches = sorted(search_matches + web_matches + img_matches, key=lambda m: m.start())
             has_actions = bool(all_action_matches)
 
-            _dbg(f"PARSED saves={len(save_matches)} actions={len(all_action_matches)} clean_len={len(assistant_text)}")
+            _dbg(f"PARSED saves={len(save_matches)} actions={len(all_action_matches)} imgs={len(img_matches)} clean_len={len(assistant_text)}")
             logger.info(
-                "[chat] parsed skills saves=%d actions=%d clean=%s",
+                "[chat] parsed skills saves=%d actions=%d imgs=%d clean=%s",
                 len(save_matches),
                 len(all_action_matches),
+                len(img_matches),
                 _preview(assistant_text, 220),
             )
 
@@ -530,16 +630,23 @@ async def chat(
             trailing_text = ""
             if all_action_matches:
                 last_action_end = max(m.end() for m in all_action_matches)
-                raw_tail = full_text[last_action_end:].strip()
-                tail_clean, _, _, _ = _strip_skills(raw_tail)
+                raw_tail = _strip_hallucinated_markers(full_text[last_action_end:])
+                tail_clean, _, _, _, _ = _strip_skills(raw_tail)
                 trailing_text = tail_clean.strip()
+                if trailing_text:
+                    _dbg(f"TRAILING_TEXT len={len(trailing_text)}: {trailing_text[:100]}")
 
             # ── Sequential agentic loop ──────────────────────────────────────
             MAX_AGENT_LOOPS = 5
             agent_loop = 0
             pending_actions: list[tuple[str, re.Match]] = []
             for m in all_action_matches:
-                kind = "search" if "SEARCH_MEMORIES" in m.group(0) else "web"
+                if "SEARCH_MEMORIES" in m.group(0):
+                    kind = "search"
+                elif "WEB_SEARCH" in m.group(0):
+                    kind = "web"
+                else:
+                    kind = "image"
                 pending_actions.append((kind, m))
             _dbg(f"AGENT_LOOP_CHECK pending={len(pending_actions)}")
 
@@ -550,10 +657,54 @@ async def chat(
                 cmd_text = action_match.group(0)
                 _dbg(f"AGENT_LOOP #{agent_loop} kind={action_kind} cmd={cmd_text[:80]}")
 
-                for sse_line in _yield_chunk("\n" + cmd_text + "\n"):
-                    yield sse_line
+                # For search/web, send the command as a text chunk so badges render.
+                # For image, DON'T send the command as text — the shimmer is handled
+                # via image_start SSE event on the frontend, and we don't want [GENERATE_IMAGE:]
+                # in the streamed text (it would duplicate with [GENERATED_IMAGE:] from image_ready).
+                if action_kind != "image":
+                    for sse_line in _yield_chunk("\n" + cmd_text + "\n"):
+                        yield sse_line
 
-                if action_kind == "search":
+                if action_kind == "image":
+                    logger.info("[chat] GENERATE_IMAGE #%d triggered: %s", agent_loop, cmd_text[:100])
+                    _dbg(f"GENERATE_IMAGE #{agent_loop} cmd={cmd_text[:80]}")
+
+                    yield "event: image_start\n"
+                    yield f"data: {json.dumps({'prompt': action_match.group(1).strip()})}\n\n"
+
+                    img_result = await _run_generate_image(action_match)
+
+                    if img_result:
+                        img_marker = f"[GENERATED_IMAGE: {img_result['path']} | {img_result['model']} | {img_result['prompt']}]"
+                        assistant_text_full = assistant_text_full + "\n" + img_marker
+                        _dbg(f"AFTER_IMG assistant_text_full len={len(assistant_text_full)}")
+                        # image_ready SSE event makes the frontend append the marker —
+                        # do NOT also yield it as a text chunk (would cause duplicate image)
+                        yield "event: image_ready\n"
+                        yield f"data: {json.dumps(img_result)}\n\n"
+                    else:
+                        error_note = (
+                            "\n*(не удалось сгенерировать изображение)*"
+                            if prompt_language == "ru" else
+                            "\n*(image generation failed)*"
+                        )
+                        assistant_text_full = assistant_text_full + error_note
+                        for sse_line in _yield_chunk(error_note):
+                            yield sse_line
+
+                    # Append trailing text that came after the image command
+                    if is_last_initial and trailing_text:
+                        _dbg(f"TRAILING_APPEND len={len(trailing_text)} text={trailing_text[:80]!r}")
+                        assistant_text_full += "\n\n" + trailing_text
+                        for sse_line in _yield_chunk("\n\n" + trailing_text):
+                            yield sse_line
+                    else:
+                        _dbg(f"TRAILING_SKIP is_last_initial={is_last_initial} trailing_len={len(trailing_text)}")
+
+                    # Images don't trigger a continuation LLM call — skip the streaming block
+                    continue
+
+                elif action_kind == "search":
                     search_query = action_match.group(1).strip()
                     logger.info("[chat] SEARCH_MEMORIES #%d triggered: %s", agent_loop, search_query[:100])
 
@@ -643,22 +794,28 @@ async def chat(
                 continuation_text = "".join(continuation_parts).strip()
                 _dbg(f"CONTINUATION #{agent_loop} done len={len(continuation_text)} text={_preview(continuation_text, 300)}")
                 logger.info("[chat] continuation #%d done text=%s", agent_loop, _preview(continuation_text, 260))
-                cont_clean, cont_saves, cont_searches, cont_web = _strip_skills(continuation_text)
+                cont_clean, cont_saves, cont_searches, cont_web, cont_imgs = _strip_skills(continuation_text)
                 logger.info(
-                    "[chat] continuation #%d parsed saves=%d searches=%d web=%d clean=%s",
+                    "[chat] continuation #%d parsed saves=%d searches=%d web=%d imgs=%d clean=%s",
                     agent_loop,
                     len(cont_saves),
                     len(cont_searches),
                     len(cont_web),
+                    len(cont_imgs),
                     _preview(cont_clean, 220),
                 )
                 if cont_clean:
                     assistant_text = assistant_text + "\n\n" + cont_clean
                 assistant_text_full = assistant_text_full + "\n" + cmd_text + "\n\n" + continuation_text
                 save_matches = save_matches + cont_saves
-                for cm in sorted(cont_searches + cont_web, key=lambda m: m.start()):
-                    kind = "search" if "SEARCH_MEMORIES" in cm.group(0) else "web"
-                    pending_actions.append((kind, cm))
+                for cm in sorted(cont_searches + cont_web + cont_imgs, key=lambda m: m.start()):
+                    if "SEARCH_MEMORIES" in cm.group(0):
+                        new_kind = "search"
+                    elif "WEB_SEARCH" in cm.group(0):
+                        new_kind = "web"
+                    else:
+                        new_kind = "image"
+                    pending_actions.append((new_kind, cm))
 
             # Append initial SAVE_MEMORY commands to full text for persistent rendering
             for sm in sorted(save_matches, key=lambda m: m.start()):
@@ -681,6 +838,20 @@ async def chat(
                 assistant_text_full += marker
                 for sse_line in _yield_chunk(marker):
                     yield sse_line
+
+            # Final cleanup: strip raw skill commands that should NOT be persisted.
+            # Only [GENERATED_IMAGE:], [SAVED_FACT:], and plain text should remain.
+            _RAW_CMD_RE = re.compile(
+                r"\[(?:GENERATE_IMAGE|SEARCH_MEMORIES|WEB_SEARCH|SAVE_MEMORY):\s*.*?\]",
+                re.DOTALL | re.IGNORECASE,
+            )
+            cleaned = _RAW_CMD_RE.sub("", assistant_text_full)
+            cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+            if cleaned != assistant_text_full:
+                _dbg(f"FINAL_CLEAN stripped raw cmds old_len={len(assistant_text_full)} new_len={len(cleaned)}")
+                assistant_text_full = cleaned
+            _dbg(f"SAVE_TO_DB assistant_text_full len={len(assistant_text_full)}")
+            _dbg(f"SAVE_CONTENT>>>{assistant_text_full}<<<END")
 
             if assistant_text_full and not assistant_text_full.startswith("[OpenRouter error"):
                 assistant_created_at = now_utc()
