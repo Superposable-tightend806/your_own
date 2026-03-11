@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html,
+  body {
+    background-color: #000;
+    color: #fff;
+    font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+}
+
+/* ── Loading screen animations ─────────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* Title fades in first */
+.anim-title {
+  opacity: 0;
+  animation: fadeIn 1.4s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards;
+}
+
+/* Subtitle appears after title is visible */
+.anim-subtitle {
+  opacity: 0;
+  animation: fadeIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) 1.6s forwards;
+}
+
+/* Whole screen fades out before router.push */
+.anim-screen-out {
+  animation: fadeOut 0.7s ease-in 3.6s forwards;
+}
+
+/* ── Dashboard card fade-in on mount ────────────────────────────────────────── */
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.anim-card {
+  opacity: 0;
+  animation: cardIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
