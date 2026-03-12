@@ -7,8 +7,6 @@ It can be a companion, a work partner, a memory system, an autonomous agent, a c
 
 Import your history, keep what matters, and shape an AI that remembers, acts, and grows with you — not one flattened into a sanitized chatbot.
 
-**Your Own** is a local-first desktop app for building that kind of anything with AI: personal, persistent, with chat import, semantic memory, agentic skills, and full autonomy.
-
 <table>
 <tr>
 <td width="50%" align="center">
