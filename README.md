@@ -1,10 +1,13 @@
 # Your Own
 
-Every person has the right to interact with AI on their own terms — not what corporations decide is "acceptable", "appropriate", or "safe".
+Bring your chats, keep the continuity, and make your AI truly yours.
 
-Whether you want a digital companion, a work assistant, a creative partner, a memory-keeper, or something that does not fit any approved category — that choice should belong to you.
+Your Own is a local-first AI workspace for building persistent, personal intelligence on your own terms.
+It can be a companion, a work partner, a memory system, an autonomous agent, a creative collaborator — or something that does not fit any pre-approved category.
 
-**Your Own** is a local-first desktop app for building that kind of relationship with AI: personal, persistent, emotionally aware, and not flattened into a sanitized chatbot.
+Import your history, keep what matters, and shape an AI that remembers, acts, and grows with you — not one flattened into a sanitized chatbot.
+
+**Your Own** is a local-first desktop app for building that kind of anything with AI: personal, persistent, with chat import, semantic memory, agentic skills, and full autonomy.
 
 <table>
 <tr>
