@@ -893,7 +893,7 @@ async def chat(
             )
 
             for sr in save_memory_results:
-                if sr.get("dedup") == "skipped":
+                if sr.get("dedup") in ("skipped", "replaced"):
                     continue
                 stars = sr.get("impressive", 0)
                 marker = f"\n[SAVED_FACT: {sr['category']} | {stars} | {sr['fact']}]"

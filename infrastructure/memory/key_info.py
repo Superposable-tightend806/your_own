@@ -438,6 +438,11 @@ async def store_fact_with_dedup(
         elif action == "replace":
             pipeline.delete_entry(similar["id"])
             logger.info("[key_info] dedup: deleted old fact id=%s, saving new one", similar["id"])
+            doc_id = pipeline.add_entry(
+                account_id=account_id, memory=fact,
+                category=category, impressive=impressive,
+            )
+            return {"fact": fact, "category": category, "impressive": impressive, "id": doc_id, "dedup": "replaced"}
 
     doc_id = pipeline.add_entry(
         account_id=account_id,
