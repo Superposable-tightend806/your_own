@@ -109,10 +109,13 @@ async def workbench_latest(
     if not entries:
         return {"ts": None, "text": None}
     ts, text = entries[-1]
-    # Strip markdown formatting for ticker display
     import re
-    clean = re.sub(r"[#*_`>\[\]]+", "", text).replace("\n", " ").strip()
-    clean = re.sub(r"\s{2,}", " ", clean)
+    # Strip markdown syntax chars
+    clean = re.sub(r"[#*_`>\[\]]+", "", text)
+    # Replace paragraph breaks with a bullet separator, single newlines with space
+    clean = re.sub(r"\n{2,}", "  ·  ", clean)
+    clean = clean.replace("\n", " ")
+    clean = re.sub(r"\s{2,}", " ", clean).strip()
     return {"ts": ts, "text": clean}
 
 

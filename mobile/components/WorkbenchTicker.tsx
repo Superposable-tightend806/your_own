@@ -1,118 +1,133 @@
 /**
- * WorkbenchTicker — a thin collapsible bar that scrolls the latest
- * workbench note as a looping ticker.
+ * WorkbenchBar — collapsible ticker bar showing the latest workbench note.
  *
- * Shows three dots (•••) as a toggle button. Tapping expands a bar
- * that continuously scrolls the AI's last note from right to left.
+ * Usage:
+ *   // In headerRight:
+ *   <WorkbenchDotsBtn open={open} onPress={() => setOpen(v => !v)} />
+ *
+ *   // In screen body (right below the header):
+ *   <WorkbenchBar open={open} text={text} />
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Easing,
-  LayoutChangeEvent,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 
-const TICKER_HEIGHT = 30;
-const SCROLL_SPEED_PX_PER_SEC = 60;
+// ── Dots toggle button (goes in Stack.Screen headerRight) ─────────────────────
 
-interface Props {
-  text: string | null;
+export function WorkbenchDotsBtn({
+  open,
+  onPress,
+}: {
+  open: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity onPress={onPress} style={sty.dotsBtn} activeOpacity={0.6}>
+      <Text style={[sty.dots, open && sty.dotsOpen]}>•••</Text>
+    </TouchableOpacity>
+  );
 }
 
-export default function WorkbenchTicker({ text }: Props) {
-  const [open, setOpen] = useState(false);
-  const [containerWidth, setContainerWidth] = useState(0);
-  const [textWidth, setTextWidth] = useState(0);
+// ── Collapsible ticker bar (goes in screen body) ──────────────────────────────
 
-  // Bar slide-in animation
-  const barHeight = useRef(new Animated.Value(0)).current;
+const BAR_H = 64;
+const FONT_SIZE = 12;
+const SPEED = 55; // px per second
 
-  // Ticker scroll animation
+export function WorkbenchBar({
+  open,
+  text,
+}: {
+  open: boolean;
+  text: string | null;
+}) {
+  const barH = useRef(new Animated.Value(0)).current;
   const scrollX = useRef(new Animated.Value(0)).current;
-  const scrollAnim = useRef<Animated.CompositeAnimation | null>(null);
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
-  // Toggle open/close
-  const toggle = () => setOpen(v => !v);
+  const [containerW, setContainerW] = useState(0);
+  const [textW, setTextW] = useState(0);
 
+  // Slide bar open / close
   useEffect(() => {
-    Animated.timing(barHeight, {
-      toValue: open ? TICKER_HEIGHT : 0,
-      duration: 220,
+    Animated.timing(barH, {
+      toValue: open ? BAR_H : 0,
+      duration: 240,
       easing: Easing.out(Easing.quad),
       useNativeDriver: false,
     }).start();
   }, [open]);
 
-  // Start / restart scroll when text or container width changes
+  // Start / stop marquee
   useEffect(() => {
-    if (!open || !text || containerWidth === 0 || textWidth === 0) return;
+    animRef.current?.stop();
+    if (!open || !text || containerW === 0 || textW === 0) return;
 
-    scrollAnim.current?.stop();
+    scrollX.setValue(containerW); // start offscreen right
+    const duration = ((containerW + textW) / SPEED) * 1000;
 
-    const totalDistance = containerWidth + textWidth;
-    const duration = (totalDistance / SCROLL_SPEED_PX_PER_SEC) * 1000;
-
-    scrollX.setValue(containerWidth); // start offscreen right
-
-    scrollAnim.current = Animated.loop(
+    animRef.current = Animated.loop(
       Animated.timing(scrollX, {
-        toValue: -textWidth,
+        toValue: -textW,
         duration,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     );
-    scrollAnim.current.start();
+    animRef.current.start();
 
-    return () => { scrollAnim.current?.stop(); };
-  }, [open, text, containerWidth, textWidth]);
+    return () => { animRef.current?.stop(); };
+  }, [open, text, containerW, textW]);
 
-  const onContainerLayout = (e: LayoutChangeEvent) =>
-    setContainerWidth(e.nativeEvent.layout.width);
-
-  const onTextLayout = (e: LayoutChangeEvent) =>
-    setTextWidth(e.nativeEvent.layout.width);
+  if (!text) return null;
 
   return (
-    <View>
-      {/* Dots toggle button — sits in the header area passed from chat */}
-      <TouchableOpacity onPress={toggle} style={sty.dotsBtn} activeOpacity={0.6}>
-        <Text style={[sty.dots, open && sty.dotsActive]}>•••</Text>
-      </TouchableOpacity>
+    <Animated.View style={[sty.bar, { height: barH }]}>
+      {/* Measure container width */}
+      <View
+        style={sty.inner}
+        onLayout={e => setContainerW(e.nativeEvent.layout.width)}
+      >
+        {/* Hidden clone — measures true text width without wrapping */}
+        <Text
+          numberOfLines={1}
+          style={[sty.tickerText, sty.hidden]}
+          onLayout={e => setTextW(e.nativeEvent.layout.width)}
+        >
+          {text}
+        </Text>
 
-      {/* Collapsible ticker bar */}
-      <Animated.View style={[sty.bar, { height: barHeight }]}>
-        <View style={sty.overflow} onLayout={onContainerLayout}>
-          <Animated.Text
-            style={[sty.tickerText, { transform: [{ translateX: scrollX }] }]}
-            onLayout={onTextLayout}
-            numberOfLines={1}
-          >
-            {text ?? ""}
-          </Animated.Text>
-        </View>
-      </Animated.View>
-    </View>
+        {/* Scrolling text */}
+        <Animated.Text
+          numberOfLines={1}
+          style={[sty.tickerText, { transform: [{ translateX: scrollX }] }]}
+        >
+          {text}
+        </Animated.Text>
+      </View>
+    </Animated.View>
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
 const sty = StyleSheet.create({
   dotsBtn: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    alignItems: "center",
-    justifyContent: "center",
   },
   dots: {
-    color: "rgba(255,255,255,0.3)",
-    fontSize: 12,
+    color: "rgba(255,255,255,0.28)",
+    fontSize: 13,
     letterSpacing: 4,
   },
-  dotsActive: {
+  dotsOpen: {
     color: "rgba(255,255,255,0.7)",
   },
   bar: {
@@ -121,18 +136,20 @@ const sty = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.07)",
     overflow: "hidden",
   },
-  overflow: {
+  inner: {
     flex: 1,
     overflow: "hidden",
     justifyContent: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
   },
   tickerText: {
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 10,
-    letterSpacing: 1,
+    color: "rgba(255,255,255,0.42)",
+    fontSize: FONT_SIZE,
     fontWeight: "300",
+    letterSpacing: 0.4,
+  },
+  hidden: {
     position: "absolute",
-    whiteSpace: "nowrap",
-  } as any,
+    opacity: 0,
+  },
 });

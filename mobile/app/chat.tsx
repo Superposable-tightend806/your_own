@@ -1,12 +1,14 @@
 /**
- * Chat screen with SSE streaming, inverted FlatList, and markdown rendering.
+ * Chat screen with SSE streaming, inverted FlatList, markdown and image attachments.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,13 +16,27 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-// Note: Markdown rendering is handled by MessageContent component
+import * as ImagePicker from "expo-image-picker";
 import { apiFetch, apiFetchStreaming, loadSettings, loadWorkbenchLatest } from "@/lib/api";
 import type { HistoryPair, Message } from "@/lib/types";
 import MessageContent from "@/components/MessageContent";
-import WorkbenchTicker from "@/components/WorkbenchTicker";
+import { WorkbenchDotsBtn, WorkbenchBar } from "@/components/WorkbenchTicker";
 
 const HISTORY_BATCH = 25;
+const MAX_IMAGES = 4;
+
+// Vision-capable models — must match backend VISION_MODELS
+const VISION_MODELS = new Set([
+  "anthropic/claude-opus-4.6",
+  "openai/gpt-5.1",
+  "openai/gpt-5.4",
+]);
+
+interface ImageAttachment {
+  uri: string;      // local file URI
+  mimeType: string; // e.g. "image/jpeg"
+  fileName: string;
+}
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -37,6 +53,8 @@ function pairToMessages(pair: HistoryPair): Message[] {
   return out;
 }
 
+// ── Message bubble ────────────────────────────────────────────────────────────
+
 const MessageBubble = React.memo(function MessageBubble({
   msg,
   isStreamingLast,
@@ -45,19 +63,31 @@ const MessageBubble = React.memo(function MessageBubble({
   isStreamingLast: boolean;
 }) {
   const isUser = msg.role === "user";
+  const imageUrls = msg.imageUrls ?? (msg.imageUrl ? [msg.imageUrl] : []);
   return (
     <View style={[styles.bubbleWrap, isUser ? styles.bubbleWrapRight : styles.bubbleWrapLeft]}>
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-        <MessageContent
-          content={msg.content}
-          role={msg.role}
-          isStreaming={isStreamingLast}
-          showCursor={isStreamingLast && !isUser}
-        />
+        {imageUrls.length > 0 && (
+          <View style={styles.attachedImages}>
+            {imageUrls.map((uri, i) => (
+              <Image key={i} source={{ uri }} style={styles.attachedImage} resizeMode="cover" />
+            ))}
+          </View>
+        )}
+        {msg.content ? (
+          <MessageContent
+            content={msg.content}
+            role={msg.role}
+            isStreaming={isStreamingLast}
+            showCursor={isStreamingLast && !isUser}
+          />
+        ) : null}
       </View>
     </View>
   );
 });
+
+// ── Chat screen ───────────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -69,23 +99,69 @@ export default function ChatScreen() {
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [aiName, setAiName] = useState("CHAT");
   const [workbenchText, setWorkbenchText] = useState<string | null>(null);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+
+  // Image attachments
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const [canAttach, setCanAttach] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const chunkBufRef = useRef("");
   const rafRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
 
-  // Inverted FlatList: data must be newest-first
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
+
+  // ── Load initial data ───────────────────────────────────────────────────────
+
+  useEffect(() => {
+    void loadHistory(null);
+    loadSettings()
+      .then(s => {
+        if (s.ai_name) setAiName(s.ai_name.toUpperCase());
+        if (s.model) setCanAttach(VISION_MODELS.has(s.model));
+      })
+      .catch(() => {});
+    loadWorkbenchLatest()
+      .then(r => { if (r.text) setWorkbenchText(r.text); })
+      .catch(() => {});
+  }, []);
+
+  // ── Image picker ────────────────────────────────────────────────────────────
+
+  const pickImages = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      quality: 0.85,
+      selectionLimit: MAX_IMAGES - attachments.length,
+    });
+
+    if (result.canceled) return;
+
+    const newAttachments: ImageAttachment[] = result.assets.map((asset, i) => ({
+      uri: asset.uri,
+      mimeType: asset.mimeType ?? "image/jpeg",
+      fileName: asset.fileName ?? `image_${i}.jpg`,
+    }));
+
+    setAttachments(prev => [...prev, ...newAttachments].slice(0, MAX_IMAGES));
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // ── History ─────────────────────────────────────────────────────────────────
 
   const loadHistory = useCallback(async (before?: string | null) => {
     if (loadingHistory) return;
     setLoadingHistory(true);
     try {
-      const params = new URLSearchParams({
-        account_id: "default",
-        limit_pairs: String(HISTORY_BATCH),
-      });
+      const params = new URLSearchParams({ account_id: "default", limit_pairs: String(HISTORY_BATCH) });
       if (before) params.set("before", before);
 
       const res = await apiFetch(`/api/chat/history?${params}`);
@@ -106,15 +182,7 @@ export default function ChatScreen() {
     }
   }, [loadingHistory]);
 
-  useEffect(() => {
-    void loadHistory(null);
-    loadSettings()
-      .then(s => { if (s.ai_name) setAiName(s.ai_name.toUpperCase()); })
-      .catch(() => {});
-    loadWorkbenchLatest()
-      .then(r => { if (r.text) setWorkbenchText(r.text); })
-      .catch(() => {});
-  }, []);
+  // ── Streaming helpers ───────────────────────────────────────────────────────
 
   const flushChunkBuf = useCallback(() => {
     rafRef.current = null;
@@ -137,44 +205,67 @@ export default function ChatScreen() {
   }, [flushChunkBuf]);
 
   const flushNow = useCallback(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
+    if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     flushChunkBuf();
   }, [flushChunkBuf]);
 
+  // ── Send ────────────────────────────────────────────────────────────────────
+
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || streaming) return;
+    if ((!text && attachments.length === 0) || streaming) return;
 
-    const userMsg: Message = { id: makeId("user"), role: "user", content: text };
+    const previewUris = attachments.map(a => a.uri);
+    const userMsg: Message = {
+      id: makeId("user"),
+      role: "user",
+      content: text,
+      imageUrls: previewUris.length > 0 ? previewUris : undefined,
+    };
     setMessages(prev => [...prev, userMsg, { id: makeId("assistant"), role: "assistant", content: "" }]);
     setInput("");
+    const sentAttachments = [...attachments];
+    setAttachments([]);
     setStreaming(true);
 
     try {
       abortRef.current = new AbortController();
-      const params = new URLSearchParams();
-      params.append("messages", JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content }))));
-      params.append("web_search", "false");
-      params.append("account_id", "default");
+
+      let body: FormData | string;
+      let headers: Record<string, string>;
+
+      if (sentAttachments.length > 0) {
+        // Multipart form-data when images are attached
+        const form = new FormData();
+        form.append("messages", JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content }))));
+        form.append("web_search", "false");
+        form.append("account_id", "default");
+        for (const att of sentAttachments) {
+          form.append("images", { uri: att.uri, name: att.fileName, type: att.mimeType } as any);
+        }
+        body = form;
+        headers = {};
+      } else {
+        // URL-encoded (no images) — preferred for streaming compatibility
+        const params = new URLSearchParams();
+        params.append("messages", JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content }))));
+        params.append("web_search", "false");
+        params.append("account_id", "default");
+        body = params.toString();
+        headers = { "Content-Type": "application/x-www-form-urlencoded" };
+      }
 
       const response = await apiFetchStreaming("/api/chat", {
         method: "POST",
-        body: params.toString(),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        headers,
         signal: abortRef.current.signal,
       });
 
       if (!response.ok) {
-        throw new Error(response.status === 401
-          ? "Auth failed — reconnect in Settings"
-          : `HTTP ${response.status}`);
+        throw new Error(response.status === 401 ? "Auth failed — reconnect in Settings" : `HTTP ${response.status}`);
       }
-      if (!response.body) {
-        throw new Error("Streaming not supported");
-      }
+      if (!response.body) throw new Error("Streaming not supported");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -203,9 +294,7 @@ export default function ChatScreen() {
               setMessages(prev => {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
-                if (last?.role === "assistant") {
-                  updated[updated.length - 1] = { ...last, content: newText };
-                }
+                if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: newText };
                 return updated;
               });
             } catch { /* ignore */ }
@@ -230,33 +319,25 @@ export default function ChatScreen() {
         const updated = [...prev];
         const last = updated[updated.length - 1];
         if (last?.role === "assistant") {
-          const display = errMsg.includes("Auth failed") ? errMsg : `[connection error: ${errMsg}]`;
-          updated[updated.length - 1] = { ...last, content: display };
+          updated[updated.length - 1] = { ...last, content: errMsg.includes("Auth failed") ? errMsg : `[connection error: ${errMsg}]` };
         }
         return updated;
       });
     } finally {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+      if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
       chunkBufRef.current = "";
       setStreaming(false);
       abortRef.current = null;
     }
   };
 
-  const handleStop = () => {
-    abortRef.current?.abort();
-    setStreaming(false);
-  };
+  const handleStop = () => { abortRef.current?.abort(); setStreaming(false); };
 
   const renderItem = ({ item, index }: { item: Message; index: number }) => (
-    <MessageBubble
-      msg={item}
-      isStreamingLast={streaming && index === 0}
-    />
+    <MessageBubble msg={item} isStreamingLast={streaming && index === 0} />
   );
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   if (!initialLoaded) {
     return (
@@ -276,9 +357,12 @@ export default function ChatScreen() {
       <Stack.Screen
         options={{
           title: aiName,
-          headerRight: () => <WorkbenchTicker text={workbenchText} />,
+          headerRight: () => (
+            <WorkbenchDotsBtn open={workbenchOpen} onPress={() => setWorkbenchOpen(v => !v)} />
+          ),
         }}
       />
+      <WorkbenchBar open={workbenchOpen} text={workbenchText} />
 
       <FlatList
         ref={flatListRef}
@@ -287,9 +371,7 @@ export default function ChatScreen() {
         renderItem={renderItem}
         inverted
         contentContainerStyle={styles.list}
-        onEndReached={() => {
-          if (hasMore && !loadingHistory) void loadHistory(cursor);
-        }}
+        onEndReached={() => { if (hasMore && !loadingHistory) void loadHistory(cursor); }}
         onEndReachedThreshold={0.3}
         ListFooterComponent={loadingHistory ? <ActivityIndicator color="#fff" style={{ marginTop: 12 }} /> : null}
         ListEmptyComponent={
@@ -300,7 +382,33 @@ export default function ChatScreen() {
         keyboardShouldPersistTaps="handled"
       />
 
+      {/* Image previews strip */}
+      {attachments.length > 0 && (
+        <View style={styles.previewStrip}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewScroll}>
+            {attachments.map((att, i) => (
+              <View key={i} style={styles.previewWrap}>
+                <Image source={{ uri: att.uri }} style={styles.previewThumb} resizeMode="cover" />
+                <TouchableOpacity style={styles.previewRemove} onPress={() => removeAttachment(i)}>
+                  <Text style={styles.previewRemoveText}>×</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Input row */}
       <View style={styles.inputRow}>
+        {canAttach && (
+          <TouchableOpacity
+            style={styles.attachBtn}
+            onPress={pickImages}
+            disabled={attachments.length >= MAX_IMAGES}
+          >
+            <Text style={[styles.attachIcon, attachments.length >= MAX_IMAGES && { opacity: 0.3 }]}>⊕</Text>
+          </TouchableOpacity>
+        )}
         <TextInput
           style={styles.input}
           value={input}
@@ -314,7 +422,7 @@ export default function ChatScreen() {
         <TouchableOpacity
           style={styles.sendBtn}
           onPress={streaming ? handleStop : handleSend}
-          disabled={!streaming && !input.trim()}
+          disabled={!streaming && !input.trim() && attachments.length === 0}
         >
           <Text style={styles.sendBtnText}>{streaming ? "stop" : "send"}</Text>
         </TouchableOpacity>
@@ -323,23 +431,42 @@ export default function ChatScreen() {
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
   list: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 },
   emptyWrap: { flex: 1, justifyContent: "center", alignItems: "center", transform: [{ scaleY: -1 }] },
-  emptyText: {
-    color: "rgba(255,255,255,0.3)",
-    textAlign: "center",
-    fontSize: 12,
-    letterSpacing: 4,
-    textTransform: "uppercase",
-  },
+  emptyText: { color: "rgba(255,255,255,0.3)", textAlign: "center", fontSize: 12, letterSpacing: 4, textTransform: "uppercase" },
+
   bubbleWrap: { marginBottom: 16, maxWidth: "85%" },
   bubbleWrapRight: { alignSelf: "flex-end" },
   bubbleWrapLeft: { alignSelf: "flex-start" },
   bubble: { borderRadius: 0, padding: 12 },
   bubbleUser: { backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
   bubbleAssistant: { backgroundColor: "transparent" },
+
+  attachedImages: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 },
+  attachedImage: { width: 160, height: 120, borderRadius: 2 },
+
+  previewStrip: {
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.08)",
+    paddingVertical: 8,
+    backgroundColor: "#000",
+  },
+  previewScroll: { paddingHorizontal: 16, gap: 8 },
+  previewWrap: { position: "relative" },
+  previewThumb: { width: 64, height: 64, borderRadius: 2 },
+  previewRemove: {
+    position: "absolute", top: -6, right: -6,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: "rgba(0,0,0,0.8)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.3)",
+    alignItems: "center", justifyContent: "center",
+  },
+  previewRemoveText: { color: "#fff", fontSize: 11, lineHeight: 14 },
+
   inputRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -349,6 +476,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 12,
   },
+  attachBtn: { paddingBottom: 6 },
+  attachIcon: { color: "rgba(255,255,255,0.4)", fontSize: 22 },
   input: {
     flex: 1,
     color: "#fff",
