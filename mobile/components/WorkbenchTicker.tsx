@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import type { NativeSyntheticEvent, TextLayoutEventData } from "react-native";
 
 // ── Dots toggle button (goes in Stack.Screen headerRight) ─────────────────────
 
@@ -37,8 +38,8 @@ export function WorkbenchDotsBtn({
 // ── Collapsible ticker bar (goes in screen body) ──────────────────────────────
 
 const BAR_H = 64;
-const FONT_SIZE = 12;
-const SPEED = 55; // px per second
+const FONT_SIZE = 13;
+const SPEED = 60; // px per second
 
 export function WorkbenchBar({
   open,
@@ -69,8 +70,9 @@ export function WorkbenchBar({
     animRef.current?.stop();
     if (!open || !text || containerW === 0 || textW === 0) return;
 
-    scrollX.setValue(containerW); // start offscreen right
-    const duration = ((containerW + textW) / SPEED) * 1000;
+    scrollX.setValue(containerW);
+    const totalDist = containerW + textW;
+    const duration = (totalDist / SPEED) * 1000;
 
     animRef.current = Animated.loop(
       Animated.timing(scrollX, {
@@ -85,19 +87,21 @@ export function WorkbenchBar({
     return () => { animRef.current?.stop(); };
   }, [open, text, containerW, textW]);
 
+  const handleTextLayout = (e: NativeSyntheticEvent<TextLayoutEventData>) => {
+    const lines = e.nativeEvent.lines;
+    if (lines && lines.length > 0) {
+      setTextW(Math.ceil(lines[0].width));
+    }
+  };
+
   if (!text) return null;
 
   return (
     <Animated.View style={[sty.bar, { height: barH }]}>
-      {/*
-        Measurement text: lives OUTSIDE the overflow:hidden inner container
-        so its natural (unwrapped) width is reported correctly by onLayout.
-        Give it a huge explicit width so it never wraps.
-      */}
+      {/* Hidden measurer — uses onTextLayout for actual text pixel width */}
       <Text
-        numberOfLines={1}
         style={[sty.tickerText, sty.measurer]}
-        onLayout={e => setTextW(e.nativeEvent.layout.width)}
+        onTextLayout={handleTextLayout}
       >
         {text}
       </Text>
@@ -108,8 +112,13 @@ export function WorkbenchBar({
         onLayout={e => setContainerW(e.nativeEvent.layout.width)}
       >
         <Animated.Text
-          numberOfLines={1}
-          style={[sty.tickerText, { transform: [{ translateX: scrollX }] }]}
+          style={[
+            sty.tickerText,
+            {
+              width: textW > 0 ? textW + 40 : 9999,
+              transform: [{ translateX: scrollX }],
+            },
+          ]}
         >
           {text}
         </Animated.Text>
@@ -146,16 +155,17 @@ const sty = StyleSheet.create({
     paddingHorizontal: 20,
   },
   tickerText: {
-    color: "rgba(255,255,255,0.42)",
+    color: "rgba(255,255,255,0.45)",
     fontSize: FONT_SIZE,
     fontWeight: "300",
-    letterSpacing: 0.4,
+    fontStyle: "italic",
+    letterSpacing: 0.3,
   },
   measurer: {
     position: "absolute",
     opacity: 0,
-    top: 0,
+    top: -9999,
     left: 0,
-    width: 9999,   // unconstrained — text reports its natural width
+    width: 99999,
   },
 });

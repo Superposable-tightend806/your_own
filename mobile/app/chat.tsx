@@ -230,25 +230,29 @@ export default function ChatScreen() {
 
     try {
       abortRef.current = new AbortController();
+      const hasImages = sentAttachments.length > 0;
+      const msgPayload = JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content })));
 
       let body: FormData | string;
-      let headers: Record<string, string>;
+      let headers: Record<string, string> = {};
 
-      if (sentAttachments.length > 0) {
-        // Multipart form-data when images are attached
+      if (hasImages) {
+        // expo/fetch doesn't support RN-style { uri, name, type } in FormData.
+        // Convert each file to a proper JS Blob via fetch(localUri) → arrayBuffer → Blob.
         const form = new FormData();
-        form.append("messages", JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content }))));
+        form.append("messages", msgPayload);
         form.append("web_search", "false");
         form.append("account_id", "default");
         for (const att of sentAttachments) {
-          form.append("images", { uri: att.uri, name: att.fileName, type: att.mimeType } as any);
+          const fileRes = await globalThis.fetch(att.uri);
+          const buf = await fileRes.arrayBuffer();
+          const blob = new Blob([buf], { type: att.mimeType });
+          form.append("images", blob, att.fileName);
         }
         body = form;
-        headers = {};
       } else {
-        // URL-encoded (no images) — preferred for streaming compatibility
         const params = new URLSearchParams();
-        params.append("messages", JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content }))));
+        params.append("messages", msgPayload);
         params.append("web_search", "false");
         params.append("account_id", "default");
         body = params.toString();
@@ -266,6 +270,11 @@ export default function ChatScreen() {
         throw new Error(response.status === 401 ? "Auth failed — reconnect in Settings" : `HTTP ${response.status}`);
       }
       if (!response.body) throw new Error("Streaming not supported");
+
+      const SKIP_EVENTS = new Set([
+        "memory", "skill", "search_start", "search_results",
+        "web_start", "web_done", "image_start", "image_ready",
+      ]);
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -301,10 +310,7 @@ export default function ChatScreen() {
             continue;
           }
 
-          if (eventType && ["memory", "skill", "search_start", "search_results",
-            "web_start", "web_done", "image_start", "image_ready"].includes(eventType)) {
-            continue;
-          }
+          if (eventType && SKIP_EVENTS.has(eventType)) continue;
 
           chunkBufRef.current += chunk;
           scheduleFlush();
@@ -351,8 +357,8 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.root}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={88}
+      behavior="padding"
+      keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 0}
     >
       <Stack.Screen
         options={{

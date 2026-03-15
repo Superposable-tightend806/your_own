@@ -708,9 +708,9 @@ async def run(account_id: str, api_key: str) -> None:
                     logger.warning("[reflection] command %s error: %s", cmd_name, exc)
                     search_results.append(f"[{resolved}] error: {exc}")
 
-            # Auto-save free-text as note if no commands were found
+            # Always save free-text reasoning to workbench for context
             stripped = _CMD_RE.sub("", response).strip()
-            if stripped and len(stripped) > 30 and not search_results and not had_writes:
+            if stripped and len(stripped) > 30:
                 wb.append(account_id, stripped)
                 had_writes = True
 
