@@ -1,22 +1,27 @@
 /**
  * Chat screen with SSE streaming, inverted FlatList, markdown and image attachments.
+ * Uses react-native-keyboard-controller for proper keyboard handling in chat layout.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  type ScrollViewProps,
 } from "react-native";
 import { Stack } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import {
+  KeyboardChatScrollView,
+  KeyboardStickyView,
+  type KeyboardChatScrollViewProps,
+} from "react-native-keyboard-controller";
 import { apiFetch, apiFetchStreaming, loadSettings, loadWorkbenchLatest } from "@/lib/api";
 import type { HistoryPair, Message } from "@/lib/types";
 import MessageContent from "@/components/MessageContent";
@@ -24,8 +29,9 @@ import { WorkbenchDotsBtn, WorkbenchBar } from "@/components/WorkbenchTicker";
 
 const HISTORY_BATCH = 25;
 const MAX_IMAGES = 4;
+const EMULATED_CHUNK = 4;
+const EMULATED_DELAY = 12;
 
-// Vision-capable models — must match backend VISION_MODELS
 const VISION_MODELS = new Set([
   "anthropic/claude-opus-4.6",
   "openai/gpt-5.1",
@@ -33,8 +39,8 @@ const VISION_MODELS = new Set([
 ]);
 
 interface ImageAttachment {
-  uri: string;      // local file URI
-  mimeType: string; // e.g. "image/jpeg"
+  uri: string;
+  mimeType: string;
   fileName: string;
 }
 
@@ -53,7 +59,22 @@ function pairToMessages(pair: HistoryPair): Message[] {
   return out;
 }
 
-// ── Message bubble ────────────────────────────────────────────────────────────
+// ── Scroll wrapper for keyboard-aware inverted FlatList ──────────────────────
+
+type Ref = React.ElementRef<typeof KeyboardChatScrollView>;
+
+const ChatScrollView = forwardRef<Ref, ScrollViewProps & KeyboardChatScrollViewProps>(
+  (props, ref) => (
+    <KeyboardChatScrollView
+      ref={ref}
+      automaticallyAdjustContentInsets={false}
+      contentInsetAdjustmentBehavior="never"
+      {...props}
+    />
+  ),
+);
+
+// ── Message bubble ───────────────────────────────────────────────────────────
 
 const MessageBubble = React.memo(function MessageBubble({
   msg,
@@ -87,7 +108,7 @@ const MessageBubble = React.memo(function MessageBubble({
   );
 });
 
-// ── Chat screen ───────────────────────────────────────────────────────────────
+// ── Chat screen ──────────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -101,7 +122,6 @@ export default function ChatScreen() {
   const [workbenchText, setWorkbenchText] = useState<string | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
 
-  // Image attachments
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [canAttach, setCanAttach] = useState(false);
 
@@ -112,7 +132,12 @@ export default function ChatScreen() {
 
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
 
-  // ── Load initial data ───────────────────────────────────────────────────────
+  const renderScrollComponent = useCallback(
+    (props: ScrollViewProps) => <ChatScrollView {...props} />,
+    [],
+  );
+
+  // ── Load initial data ────────────────────────────────────────────────────
 
   useEffect(() => {
     void loadHistory(null);
@@ -127,7 +152,7 @@ export default function ChatScreen() {
       .catch(() => {});
   }, []);
 
-  // ── Image picker ────────────────────────────────────────────────────────────
+  // ── Image picker ─────────────────────────────────────────────────────────
 
   const pickImages = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -155,7 +180,7 @@ export default function ChatScreen() {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
-  // ── History ─────────────────────────────────────────────────────────────────
+  // ── History ──────────────────────────────────────────────────────────────
 
   const loadHistory = useCallback(async (before?: string | null) => {
     if (loadingHistory) return;
@@ -182,7 +207,7 @@ export default function ChatScreen() {
     }
   }, [loadingHistory]);
 
-  // ── Streaming helpers ───────────────────────────────────────────────────────
+  // ── Streaming helpers ──────────────────────────────────────────────────
 
   const flushChunkBuf = useCallback(() => {
     rafRef.current = null;
@@ -209,7 +234,7 @@ export default function ChatScreen() {
     flushChunkBuf();
   }, [flushChunkBuf]);
 
-  // ── Send ────────────────────────────────────────────────────────────────────
+  // ── Send ─────────────────────────────────────────────────────────────────
 
   const handleSend = async () => {
     const text = input.trim();
@@ -233,90 +258,121 @@ export default function ChatScreen() {
       const hasImages = sentAttachments.length > 0;
       const msgPayload = JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content })));
 
-      let body: FormData | string;
-      let headers: Record<string, string> = {};
+      let response: Response;
 
       if (hasImages) {
-        // expo/fetch doesn't support RN-style { uri, name, type } in FormData.
-        // Convert each file to a proper JS Blob via fetch(localUri) → arrayBuffer → Blob.
         const form = new FormData();
         form.append("messages", msgPayload);
         form.append("web_search", "false");
         form.append("account_id", "default");
         for (const att of sentAttachments) {
-          const fileRes = await globalThis.fetch(att.uri);
-          const buf = await fileRes.arrayBuffer();
-          const blob = new Blob([buf], { type: att.mimeType });
-          form.append("images", blob, att.fileName);
+          form.append("images", { uri: att.uri, name: att.fileName, type: att.mimeType } as any);
         }
-        body = form;
+        response = await apiFetch("/api/chat", {
+          method: "POST",
+          body: form,
+          signal: abortRef.current.signal,
+        });
       } else {
         const params = new URLSearchParams();
         params.append("messages", msgPayload);
         params.append("web_search", "false");
         params.append("account_id", "default");
-        body = params.toString();
-        headers = { "Content-Type": "application/x-www-form-urlencoded" };
+        response = await apiFetchStreaming("/api/chat", {
+          method: "POST",
+          body: params.toString(),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          signal: abortRef.current.signal,
+        });
       }
-
-      const response = await apiFetchStreaming("/api/chat", {
-        method: "POST",
-        body,
-        headers,
-        signal: abortRef.current.signal,
-      });
 
       if (!response.ok) {
         throw new Error(response.status === 401 ? "Auth failed — reconnect in Settings" : `HTTP ${response.status}`);
       }
-      if (!response.body) throw new Error("Streaming not supported");
 
       const SKIP_EVENTS = new Set([
         "memory", "skill", "search_start", "search_results",
         "web_start", "web_done", "image_start", "image_ready",
       ]);
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = typeof value === "string" ? value : decoder.decode(value, { stream: true });
-        sseBuffer += chunk;
-
-        const events = sseBuffer.split("\n\n");
-        sseBuffer = events.pop() ?? "";
-
-        for (const event of events) {
-          const eventType = event.split("\n").find(l => l.startsWith("event: "))?.slice(7).trim();
-          const dataLines = event.split("\n").filter(l => l.startsWith("data: ")).map(l => l.slice(6));
-          if (!dataLines.length) continue;
-          const chunk = dataLines.join("\n");
-          if (chunk === "[DONE]") break;
-
-          if (eventType === "rewrite") {
-            try {
-              const { text: newText } = JSON.parse(chunk);
-              flushNow();
-              setMessages(prev => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: newText };
-                return updated;
-              });
-            } catch { /* ignore */ }
-            continue;
-          }
-
-          if (eventType && SKIP_EVENTS.has(eventType)) continue;
-
-          chunkBufRef.current += chunk;
-          scheduleFlush();
+      const parseSseText = (raw: string): string => {
+        let acc = "";
+        for (const event of raw.split("\n\n")) {
+          const et = event.split("\n").find(l => l.startsWith("event: "))?.slice(7).trim();
+          const dl = event.split("\n").filter(l => l.startsWith("data: ")).map(l => l.slice(6));
+          if (!dl.length) continue;
+          const d = dl.join("\n");
+          if (d === "[DONE]") break;
+          if (et === "rewrite") { try { acc = JSON.parse(d).text; } catch {} continue; }
+          if (et && SKIP_EVENTS.has(et)) continue;
+          acc += d;
         }
+        return acc;
+      };
+
+      if (response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = typeof value === "string" ? value : decoder.decode(value, { stream: true });
+          sseBuffer += chunk;
+
+          const events = sseBuffer.split("\n\n");
+          sseBuffer = events.pop() ?? "";
+
+          for (const event of events) {
+            const eventType = event.split("\n").find(l => l.startsWith("event: "))?.slice(7).trim();
+            const dataLines = event.split("\n").filter(l => l.startsWith("data: ")).map(l => l.slice(6));
+            if (!dataLines.length) continue;
+            const chunk = dataLines.join("\n");
+            if (chunk === "[DONE]") break;
+
+            if (eventType === "rewrite") {
+              try {
+                const { text: newText } = JSON.parse(chunk);
+                flushNow();
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: newText };
+                  return updated;
+                });
+              } catch { /* ignore */ }
+              continue;
+            }
+
+            if (eventType && SKIP_EVENTS.has(eventType)) continue;
+
+            chunkBufRef.current += chunk;
+            scheduleFlush();
+          }
+        }
+        flushNow();
+      } else {
+        // Emulate streaming: reveal text progressively so it doesn't flash in
+        const fullText = await response.text();
+        const content = parseSseText(fullText);
+        for (let i = 0; i < content.length; i += EMULATED_CHUNK) {
+          const partial = content.slice(0, i + EMULATED_CHUNK);
+          setMessages(prev => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: partial };
+            return updated;
+          });
+          await new Promise(r => setTimeout(r, EMULATED_DELAY));
+        }
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content };
+          return updated;
+        });
       }
-      flushNow();
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;
       flushNow();
@@ -343,7 +399,7 @@ export default function ChatScreen() {
     <MessageBubble msg={item} isStreamingLast={streaming && index === 0} />
   );
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────
 
   if (!initialLoaded) {
     return (
@@ -355,11 +411,7 @@ export default function ChatScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior="padding"
-      keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 0}
-    >
+    <View style={styles.root}>
       <Stack.Screen
         options={{
           title: aiName,
@@ -376,6 +428,7 @@ export default function ChatScreen() {
         keyExtractor={m => m.id}
         renderItem={renderItem}
         inverted
+        renderScrollComponent={renderScrollComponent}
         contentContainerStyle={styles.list}
         onEndReached={() => { if (hasMore && !loadingHistory) void loadHistory(cursor); }}
         onEndReachedThreshold={0.3}
@@ -388,56 +441,59 @@ export default function ChatScreen() {
         keyboardShouldPersistTaps="handled"
       />
 
-      {/* Image previews strip */}
-      {attachments.length > 0 && (
-        <View style={styles.previewStrip}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewScroll}>
-            {attachments.map((att, i) => (
-              <View key={i} style={styles.previewWrap}>
-                <Image source={{ uri: att.uri }} style={styles.previewThumb} resizeMode="cover" />
-                <TouchableOpacity style={styles.previewRemove} onPress={() => removeAttachment(i)}>
-                  <Text style={styles.previewRemoveText}>×</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* Input row */}
-      <View style={styles.inputRow}>
-        {canAttach && (
-          <TouchableOpacity
-            style={styles.attachBtn}
-            onPress={pickImages}
-            disabled={attachments.length >= MAX_IMAGES}
-          >
-            <Text style={[styles.attachIcon, attachments.length >= MAX_IMAGES && { opacity: 0.3 }]}>⊕</Text>
-          </TouchableOpacity>
+      {/* Input area — sticks above keyboard automatically */}
+      <KeyboardStickyView style={styles.stickyInput}>
+        {/* Image previews strip */}
+        {attachments.length > 0 && (
+          <View style={styles.previewStrip}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewScroll}>
+              {attachments.map((att, i) => (
+                <View key={i} style={styles.previewWrap}>
+                  <Image source={{ uri: att.uri }} style={styles.previewThumb} resizeMode="cover" />
+                  <TouchableOpacity style={styles.previewRemove} onPress={() => removeAttachment(i)}>
+                    <Text style={styles.previewRemoveText}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
         )}
-        <TextInput
-          style={styles.input}
-          value={input}
-          onChangeText={setInput}
-          placeholder="..."
-          placeholderTextColor="rgba(255,255,255,0.3)"
-          multiline
-          onSubmitEditing={handleSend}
-          blurOnSubmit={false}
-        />
-        <TouchableOpacity
-          style={styles.sendBtn}
-          onPress={streaming ? handleStop : handleSend}
-          disabled={!streaming && !input.trim() && attachments.length === 0}
-        >
-          <Text style={styles.sendBtnText}>{streaming ? "stop" : "send"}</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+
+        {/* Input row */}
+        <View style={styles.inputRow}>
+          {canAttach && (
+            <TouchableOpacity
+              style={styles.attachBtn}
+              onPress={pickImages}
+              disabled={attachments.length >= MAX_IMAGES}
+            >
+              <Text style={[styles.attachIcon, attachments.length >= MAX_IMAGES && { opacity: 0.3 }]}>⊕</Text>
+            </TouchableOpacity>
+          )}
+          <TextInput
+            style={styles.input}
+            value={input}
+            onChangeText={setInput}
+            placeholder="..."
+            placeholderTextColor="rgba(255,255,255,0.3)"
+            multiline
+            onSubmitEditing={handleSend}
+            blurOnSubmit={false}
+          />
+          <TouchableOpacity
+            style={styles.sendBtn}
+            onPress={streaming ? handleStop : handleSend}
+            disabled={!streaming && !input.trim() && attachments.length === 0}
+          >
+            <Text style={styles.sendBtnText}>{streaming ? "stop" : "send"}</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardStickyView>
+    </View>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
@@ -455,11 +511,14 @@ const styles = StyleSheet.create({
   attachedImages: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 },
   attachedImage: { width: 160, height: 120, borderRadius: 2 },
 
+  stickyInput: {
+    backgroundColor: "#000",
+  },
+
   previewStrip: {
     borderTopWidth: 1,
     borderTopColor: "rgba(255,255,255,0.08)",
     paddingVertical: 8,
-    backgroundColor: "#000",
   },
   previewScroll: { paddingHorizontal: 16, gap: 8 },
   previewWrap: { position: "relative" },
