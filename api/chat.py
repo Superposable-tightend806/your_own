@@ -69,6 +69,26 @@ _dbg("MODULE_LOADED")
 router = APIRouter(prefix="/api", tags=["chat"], dependencies=[Depends(require_auth)])
 
 
+async def _post_analyze_background(
+    account_id: str,
+    recent_pairs: list[dict],
+    current_user_text: str,
+    current_assistant_text: str,
+    api_key: str,
+) -> None:
+    try:
+        from infrastructure.autonomy.post_analyzer import run_post_analysis
+        await run_post_analysis(
+            account_id=account_id,
+            recent_pairs=recent_pairs,
+            current_user_text=current_user_text,
+            current_assistant_text=current_assistant_text,
+            api_key=api_key,
+        )
+    except Exception as exc:
+        logger.warning("[chat] post-analysis error: %s", exc)
+
+
 def _preview(text: str, limit: int = 180) -> str:
     compact = " ".join((text or "").split())
     if len(compact) <= limit:
@@ -968,6 +988,15 @@ async def chat(
                 ]
                 fill_chunk_embeddings(assistant_rows)
                 await repo.bulk_save(assistant_rows)
+
+            # Fire post-dialogue analysis in background (no delay for the user)
+            asyncio.create_task(_post_analyze_background(
+                account_id=account_id or "default",
+                recent_pairs=recent_pairs,
+                current_user_text=current_user_text,
+                current_assistant_text=assistant_text,
+                api_key=api_key,
+            ))
 
             # Update Chroma usage for retrieved facts
             if chroma_fact_ids:

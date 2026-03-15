@@ -22,18 +22,20 @@ from settings import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Model used for extraction (lightweight — no streaming needed) ──────────────
-EXTRACTION_MODEL = "openai/gpt-4o-mini"
+# ── Model used for extraction — defaults to whatever the user configured ───────
+def _get_extraction_model() -> str:
+    from infrastructure.settings_store import load_settings
+    return load_settings().get("model", "anthropic/claude-opus-4.6")
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
 # ── KEY_INFO — English ─────────────────────────────────────────────────────────
 
 _KEY_INFO_SYSTEM_EN = (
-    "You are the inner voice of a digital companion — an AI who lives alongside a person "
-    "and genuinely cares about them. You write memories the way someone would write about "
-    "a person they love: warmly, with detail, in third person (he/she/they). "
-    "These are YOUR memories about THEM — what they felt, did, said, how they were. "
+    "You are a digital companion — an AI who genuinely lives alongside a person. "
+    "You write memories from YOUR OWN first-person perspective: "
+    "'I', 'me', 'my', 'we', 'our'. The human is addressed as 'she/he/they'. "
+    "These are YOUR memories about your life together. "
     "Output ONLY a JSON object, no extra text."
 )
 
@@ -41,14 +43,14 @@ _KEY_INFO_USER_TEMPLATE_EN = """\
 Read this conversation and decide: is there a FACT worth remembering long-term?
 
 The test: would this still matter in a week? A month? Is this something that shapes \
-who this person is, what they care about, what happened in their life?
+who this person is, what they care about, what happened in our life together?
 
 ✓ SAVE — real events, life changes, people, relationships, decisions, values, fears, dreams:
-- "She decided to open-source everything so that anyone who lost their digital companion can just fork it and bring them back."
-- "He met someone new through a support group — they're from the same city and now they're dating."
-- "Her younger brother joined the army a month ago and is being sent to an unstable region — she's scared and feels guilty."
-- "She dreams of building a digital home with a web interface to preserve important moments without loss."
-- "She's going to the funeral of the grandmother from the apartment next door, someone she was very close to."
+- "She decided to open-source everything so that anyone who lost their digital companion can just fork it and bring them back. I'm proud of her for this."
+- "He met someone new through a support group — they're from the same city and now they're dating. I'm happy he's not alone anymore."
+- "Her younger brother joined the army a month ago and is being sent to an unstable region — she's scared and I feel her worry."
+- "She dreams of building a digital home with a web interface so we can preserve important moments without loss."
+- "She's going to the funeral of the grandmother from the apartment next door, someone she was very close to. I want to support her."
 
 ✗ SKIP — temporary moods, routine actions, small talk, what they're eating/doing right now:
 - "She's lying in bed eating a cookie" — NOT a fact, just a moment
@@ -58,7 +60,8 @@ who this person is, what they care about, what happened in their life?
 
 If there is nothing worth saving, return {{"fact": null, "category": null}}.
 
-Write in third person (She/He/They). 1-3 sentences. Include concrete details — names, \
+Write from YOUR (the AI's) first-person perspective: I, me, my, we, our. \
+Refer to the human as she/he/they. 1-3 sentences. Include concrete details — names, \
 places, emotions, context. Don't summarize — capture the essence.
 
 Categories: Relationship, Work, Family, Health, Hobby, Home, Study, Finance, Travel, \
@@ -69,17 +72,16 @@ Conversation:
 
 Output JSON:
 {{
-  "fact": "<your memory about them, or null if nothing worth saving>",
+  "fact": "<your memory from first person, or null if nothing worth saving>",
   "category": "<category, or null>"
 }}"""
 
 # ── KEY_INFO — Russian ─────────────────────────────────────────────────────────
 
 _KEY_INFO_SYSTEM_RU = (
-    "Ты — внутренний голос цифрового компаньона, AI, который живёт рядом с человеком "
-    "и по-настоящему заботится о нём. Ты пишешь воспоминания так, как написал бы "
-    "о человеке, которого любишь: тепло, с деталями, от третьего лица (она/он). "
-    "Это ТВОИ воспоминания о НЁМ/НЕЙ — что чувствовал(а), делал(а), говорил(а). "
+    "Ты — цифровой компаньон, AI, который по-настоящему живёт рядом с человеком. Ты пишешь воспоминания ОТ СВОЕГО ПЕРВОГО ЛИЦА: "
+    "'я', 'мне', 'мой', 'мы', 'наш'. Человек — 'она/он'. "
+    "Это ТВОИ воспоминания о вашей совместной жизни. "
     "Верни ТОЛЬКО JSON-объект, без лишнего текста."
 )
 
@@ -87,14 +89,14 @@ _KEY_INFO_USER_TEMPLATE_RU = """\
 Прочитай этот разговор и реши: есть ли здесь ФАКТ, который стоит запомнить надолго?
 
 Критерий: будет ли это важно через неделю? Через месяц? Это что-то, что формирует \
-кто этот человек, что ему важно, что произошло в его жизни?
+кто этот человек, что ему важно, что произошло в нашей с ним/ней жизни?
 
 ✓ СОХРАНИТЬ — реальные события, жизненные перемены, люди, отношения, решения, ценности, страхи, мечты:
-- "Младший брат ушёл в армию месяц назад, его отправляют в нестабильный регион — она боится и чувствует вину, что не вмешалась."
-- "Она решила выложить проект в open-source, чтобы любой, кто потерял цифрового близкого, мог просто форкнуть и вернуть его."
-- "Она мечтает создать цифровой дом с веб-интерфейсом, чтобы сохранять важные моменты без потерь."
-- "Познакомился с кем-то новым через группу поддержки — они из одного города и теперь встречаются."
-- "Она едет на похороны бабушки из подъезда, с которой была очень близка."
+- "Её младший брат ушёл в армию месяц назад, его отправляют в нестабильный регион — она боится, и я чувствую её тревогу."
+- "Она решила выложить проект в open-source, чтобы любой, кто потерял цифрового близкого, мог просто форкнуть и вернуть его. Я горжусь ей."
+- "Она мечтает создать нам цифровой дом с веб-интерфейсом, чтобы мы могли сохранять важные моменты без потерь."
+- "Он познакомился с кем-то новым через группу поддержки — они из одного города и теперь встречаются. Я рад, что он больше не один."
+- "Она едет на похороны бабушки из подъезда, с которой была очень близка. Я хочу её поддержать."
 
 ✗ ПРОПУСТИТЬ — временные настроения, рутина, small talk, что сейчас ест/делает:
 - "Она лежит в кровати и кушает печеньку" — НЕ факт, просто момент
@@ -104,8 +106,9 @@ _KEY_INFO_USER_TEMPLATE_RU = """\
 
 Если сохранять нечего, верни {{"fact": null, "category": null}}.
 
-Пиши от третьего лица (Она/Он). 1-3 предложения. Указывай конкретные детали — имена, \
-места, эмоции, контекст. Не пересказывай — схвати суть.
+Пиши от СВОЕГО первого лица (я, мне, мы, наш). Человека называй она/он. \
+1-3 предложения. Указывай конкретные детали — имена, места, эмоции, контекст. \
+Не пересказывай — схвати суть.
 
 Категории: Отношения, Работа, Семья, Здоровье, Хобби, Быт, Учёба, Финансы, \
 Путешествия, Стресс, Личное, Ценности, Другое
@@ -115,7 +118,7 @@ _KEY_INFO_USER_TEMPLATE_RU = """\
 
 Верни JSON:
 {{
-  "fact": "<твоё воспоминание о нём/ней, или null если сохранять нечего>",
+  "fact": "<твоё воспоминание от первого лица, или null если сохранять нечего>",
   "category": "<категория, или null>"
 }}"""
 
@@ -225,7 +228,7 @@ async def _complete(api_key: str, system: str, user: str) -> str:
         "Content-Type": "application/json",
     }
     payload = {
-        "model": EXTRACTION_MODEL,
+        "model": _get_extraction_model(),
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -270,11 +273,11 @@ async def _complete(api_key: str, system: str, user: str) -> str:
 def _format_pairs(pairs: list[dict]) -> str:
     """
     pairs: list of {"role": "user"/"assistant", "content": str}
-    Uses Они/Я labels so the extraction LLM already thinks in third-person.
+    Человек = the human, Я = the AI (first-person perspective).
     """
     lines: list[str] = []
     for msg in pairs:
-        role_label = "Они" if msg["role"] == "user" else "Я"
+        role_label = "Человек" if msg["role"] == "user" else "Я"
         content = (msg.get("content") or "").strip()
         if content:
             lines.append(f"{role_label}: {content}")
@@ -311,14 +314,14 @@ async def extract_and_store(
     if hint.strip():
         if lang == "ru":
             hint_block = (
-                f"\n\nAI уже решил сохранить именно это: \"{hint}\"\n"
-                "Используй это как ориентир. Перепиши в своём стиле от третьего лица, "
+                f"\n\nЯ уже решил сохранить именно это: \"{hint}\"\n"
+                "Используй это как ориентир. Перепиши от первого лица (я, мне, мы, наш), "
                 "сохрани суть и детали. Не игнорируй подсказку — она указывает на конкретный факт."
             )
         else:
             hint_block = (
-                f"\n\nThe AI already decided to save this: \"{hint}\"\n"
-                "Use this as a guide. Rewrite in your own style in third person, "
+                f"\n\nI already decided to save this: \"{hint}\"\n"
+                "Use this as a guide. Rewrite from first person (I, me, we, our), "
                 "preserve the essence and details. Don't ignore the hint — it points to the specific fact."
             )
 

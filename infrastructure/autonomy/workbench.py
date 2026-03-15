@@ -8,7 +8,8 @@ next reflection cycle.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 
@@ -18,6 +19,11 @@ WORKBENCH_MAX_AGE_HOURS = 48
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "autonomy"
 _lock = Lock()
 
+_TITLE = "# Рабочий стол\n"
+
+_OLD_HDR = re.compile(r"^###\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*$")
+_NEW_HDR = re.compile(r"^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*(?:UTC)?\]\s*$")
+
 
 def _path(account_id: str) -> Path:
     p = _DATA_DIR / account_id
@@ -25,14 +31,65 @@ def _path(account_id: str) -> Path:
     return p / "workbench.md"
 
 
+def _parse_entries(content: str) -> list[tuple[str, str]]:
+    """Parse workbench entries supporting both ``### ts`` and ``---/[ts UTC]`` formats.
+
+    Returns list of ``(timestamp_str, body_text)`` in file order.
+    ``timestamp_str`` is always ``YYYY-MM-DD HH:MM`` (no UTC suffix).
+    """
+    if not content.strip():
+        return []
+
+    entries: list[tuple[str, str]] = []
+    lines = content.splitlines()
+    i = 0
+
+    while i < len(lines):
+        stripped = lines[i].strip()
+        ts: str | None = None
+
+        m = _OLD_HDR.match(stripped)
+        if m:
+            ts = m.group(1)
+            i += 1
+        elif stripped == "---" and i + 1 < len(lines):
+            m = _NEW_HDR.match(lines[i + 1].strip())
+            if m:
+                ts = m.group(1)
+                i += 2
+            else:
+                i += 1
+                continue
+        else:
+            i += 1
+            continue
+
+        body_lines: list[str] = []
+        while i < len(lines):
+            peek = lines[i].strip()
+            if _OLD_HDR.match(peek):
+                break
+            if peek == "---" and i + 1 < len(lines) and _NEW_HDR.match(lines[i + 1].strip()):
+                break
+            body_lines.append(lines[i])
+            i += 1
+
+        body = "\n".join(body_lines).strip()
+        if ts and body:
+            entries.append((ts, body))
+
+    return entries
+
+
 def append(account_id: str, text: str) -> None:
     """Append a timestamped note to the workbench."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    entry = f"\n---\n[{ts}]\n{text.strip()}\n"
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     path = _path(account_id)
     with _lock:
+        if not path.exists() or path.stat().st_size == 0:
+            path.write_text(_TITLE, encoding="utf-8")
         with open(path, "a", encoding="utf-8") as f:
-            f.write(entry)
+            f.write(f"\n\n### {ts}\n{text.strip()}\n")
     logger.debug("[workbench:%s] appended %d chars", account_id, len(text))
 
 
@@ -49,77 +106,66 @@ def search(account_id: str, query: str) -> str:
     content = read(account_id)
     if not content:
         return "(workbench is empty)"
+    entries = _parse_entries(content)
+    if not entries:
+        return "(workbench is empty)"
     query_lower = query.lower()
-    blocks = content.split("\n---\n")
-    matches: list[str] = []
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-        if query_lower in block.lower():
-            matches.append(block)
+    matches = [
+        f"### {ts}\n{body}"
+        for ts, body in entries
+        if query_lower in body.lower()
+    ]
     if not matches:
         return f"No notes matching '{query}'."
-    return "\n---\n".join(matches[-10:])
+    return "\n\n".join(matches[-10:])
 
 
 def get_stale_entries(account_id: str) -> list[tuple[str, str]]:
     """Return (timestamp_str, text) tuples for entries older than max age."""
-    from datetime import timedelta
     content = read(account_id)
     if not content:
         return []
 
-    stale: list[tuple[str, str]] = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
-    blocks = content.split("\n---\n")
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-        lines = block.splitlines()
-        if not lines:
-            continue
-        first = lines[0].strip("[]")
+    stale: list[tuple[str, str]] = []
+
+    for ts_str, body in _parse_entries(content):
         try:
-            ts = datetime.strptime(first, "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc)
+            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
         except ValueError:
             continue
         if ts < cutoff:
-            stale.append((first, "\n".join(lines[1:]).strip()))
+            stale.append((ts_str, body))
+
     return stale
 
 
 def remove_stale(account_id: str) -> None:
     """Remove entries older than max age from the workbench file."""
-    from datetime import timedelta
     content = read(account_id)
     if not content:
         return
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
-    blocks = content.split("\n---\n")
-    kept: list[str] = []
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-        lines = block.splitlines()
-        if not lines:
-            continue
-        first = lines[0].strip("[]")
+    entries = _parse_entries(content)
+
+    kept: list[tuple[str, str]] = []
+    for ts_str, body in entries:
         try:
-            ts = datetime.strptime(first, "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc)
+            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
         except ValueError:
-            kept.append(block)
+            kept.append((ts_str, body))
             continue
         if ts >= cutoff:
-            kept.append(block)
+            kept.append((ts_str, body))
 
     path = _path(account_id)
     with _lock:
         if kept:
-            path.write_text("\n---\n" + "\n---\n".join(kept) + "\n", encoding="utf-8")
+            parts = [_TITLE]
+            for ts_str, body in kept:
+                parts.append(f"\n\n### {ts_str}\n{body}\n")
+            path.write_text("".join(parts), encoding="utf-8")
         else:
-            path.write_text("", encoding="utf-8")
+            path.write_text(_TITLE, encoding="utf-8")
     logger.info("[workbench:%s] removed stale entries, kept %d blocks", account_id, len(kept))

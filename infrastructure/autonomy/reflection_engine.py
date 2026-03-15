@@ -325,6 +325,9 @@ async def _handle_command(
             role="assistant", text=msg_text, source="push",
         )
         await MessageRepository(db).bulk_save([row])
+        _l = "ru" if re.search(r"[А-Яа-яЁё]", msg_text) else "en"
+        _pfx = "Написал ей" if _l == "ru" else "Sent message"
+        wb.append(account_id, f"{_pfx}: «{msg_text[:100]}...»")
         return None
 
     elif cmd == "SCHEDULE_MESSAGE":
@@ -341,6 +344,9 @@ async def _handle_command(
                     payload=payload, scheduled_at=scheduled_at,
                 )
                 logger.info("[reflection:%s] scheduled at %s", account_id, ts_str.strip())
+                _l = "ru" if re.search(r"[А-Яа-яЁё]", message) else "en"
+                _pfx = "Запланировал сообщение на" if _l == "ru" else "Scheduled message for"
+                wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{message.strip()[:100]}...»")
             except ValueError:
                 logger.warning("[reflection] bad SCHEDULE_MESSAGE ts: %r", ts_str)
         return None
