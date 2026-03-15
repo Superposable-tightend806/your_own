@@ -24,6 +24,10 @@
       },
       "package": "com.yourown.app",
       "softwareKeyboardLayoutMode": "adjustResize",
+      "notification": {
+        "icon": "./assets/notification-icon.png",
+        "color": "#000000"
+      },
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"

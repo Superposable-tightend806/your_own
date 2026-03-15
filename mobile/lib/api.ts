@@ -143,3 +143,10 @@ export async function loadSettings(): Promise<Settings> {
 export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   await apiPut<unknown>("/api/settings", patch);
 }
+
+/** Return the latest workbench note (stripped of markdown). */
+export async function loadWorkbenchLatest(
+  accountId = "default",
+): Promise<{ ts: string | null; text: string | null }> {
+  return apiGet(`/api/settings/workbench/latest?account_id=${accountId}`);
+}

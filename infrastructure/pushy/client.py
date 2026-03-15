@@ -45,7 +45,7 @@ class PushyClient:
 
         payload: dict[str, Any] = {
             "to": self.device_token,
-            "data": data or {"message": body},
+            "data": data or {"title": title, "message": body},
             "notification": {
                 "title": title,
                 "body": body,

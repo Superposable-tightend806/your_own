@@ -26,8 +26,6 @@ export default function RootLayout() {
         <Stack.Screen name="chat" options={{ title: "CHAT" }} />
         <Stack.Screen name="dashboard/index" options={{ title: "DASHBOARD" }} />
         <Stack.Screen name="dashboard/settings" options={{ title: "SETTINGS" }} />
-        <Stack.Screen name="dashboard/memory" options={{ title: "MEMORY" }} />
-        <Stack.Screen name="dashboard/soul" options={{ title: "SOUL" }} />
       </Stack>
       <InAppNotification />
     </View>

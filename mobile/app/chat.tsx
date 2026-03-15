@@ -7,17 +7,18 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { Stack } from "expo-router";
 // Note: Markdown rendering is handled by MessageContent component
-import { apiFetch, apiFetchStreaming } from "@/lib/api";
+import { apiFetch, apiFetchStreaming, loadSettings, loadWorkbenchLatest } from "@/lib/api";
 import type { HistoryPair, Message } from "@/lib/types";
 import MessageContent from "@/components/MessageContent";
+import WorkbenchTicker from "@/components/WorkbenchTicker";
 
 const HISTORY_BATCH = 25;
 
@@ -66,6 +67,8 @@ export default function ChatScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [cursor, setCursor] = useState<string | null>(null);
   const [initialLoaded, setInitialLoaded] = useState(false);
+  const [aiName, setAiName] = useState("CHAT");
+  const [workbenchText, setWorkbenchText] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const chunkBufRef = useRef("");
@@ -105,6 +108,12 @@ export default function ChatScreen() {
 
   useEffect(() => {
     void loadHistory(null);
+    loadSettings()
+      .then(s => { if (s.ai_name) setAiName(s.ai_name.toUpperCase()); })
+      .catch(() => {});
+    loadWorkbenchLatest()
+      .then(r => { if (r.text) setWorkbenchText(r.text); })
+      .catch(() => {});
   }, []);
 
   const flushChunkBuf = useCallback(() => {
@@ -251,59 +260,66 @@ export default function ChatScreen() {
 
   if (!initialLoaded) {
     return (
-      <SafeAreaView style={styles.root}>
+      <View style={styles.root}>
+        <Stack.Screen options={{ title: aiName }} />
         <ActivityIndicator color="#fff" style={{ marginTop: 40 }} />
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior="padding"
-        keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 0}
-      >
-        <FlatList
-          ref={flatListRef}
-          data={reversedMessages}
-          keyExtractor={m => m.id}
-          renderItem={renderItem}
-          inverted
-          contentContainerStyle={styles.list}
-          onEndReached={() => {
-            if (hasMore && !loadingHistory) void loadHistory(cursor);
-          }}
-          onEndReachedThreshold={0.3}
-          ListFooterComponent={loadingHistory ? <ActivityIndicator color="#fff" style={{ marginTop: 12 }} /> : null}
-          ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText}>start typing</Text>
-            </View>
-          }
-        />
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 56}
+    >
+      <Stack.Screen
+        options={{
+          title: aiName,
+          headerRight: () => <WorkbenchTicker text={workbenchText} />,
+        }}
+      />
 
-        <View style={styles.inputRow}>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={setInput}
-            placeholder="..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
-            multiline
-            onSubmitEditing={handleSend}
-            blurOnSubmit={false}
-          />
-          <TouchableOpacity
-            style={styles.sendBtn}
-            onPress={streaming ? handleStop : handleSend}
-            disabled={!streaming && !input.trim()}
-          >
-            <Text style={styles.sendBtnText}>{streaming ? "stop" : "send"}</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <FlatList
+        ref={flatListRef}
+        data={reversedMessages}
+        keyExtractor={m => m.id}
+        renderItem={renderItem}
+        inverted
+        contentContainerStyle={styles.list}
+        onEndReached={() => {
+          if (hasMore && !loadingHistory) void loadHistory(cursor);
+        }}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={loadingHistory ? <ActivityIndicator color="#fff" style={{ marginTop: 12 }} /> : null}
+        ListEmptyComponent={
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyText}>start typing</Text>
+          </View>
+        }
+        keyboardShouldPersistTaps="handled"
+      />
+
+      <View style={styles.inputRow}>
+        <TextInput
+          style={styles.input}
+          value={input}
+          onChangeText={setInput}
+          placeholder="..."
+          placeholderTextColor="rgba(255,255,255,0.3)"
+          multiline
+          onSubmitEditing={handleSend}
+          blurOnSubmit={false}
+        />
+        <TouchableOpacity
+          style={styles.sendBtn}
+          onPress={streaming ? handleStop : handleSend}
+          disabled={!streaming && !input.trim()}
+        >
+          <Text style={styles.sendBtnText}>{streaming ? "stop" : "send"}</Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 

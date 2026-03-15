@@ -1,9 +1,10 @@
 /**
- * Dashboard home — navigation hub.
+ * Dashboard — tile grid matching the desktop layout.
  */
 import { useRouter } from "expo-router";
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+  Animated,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -11,74 +12,194 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { loadSettings } from "@/lib/api";
 
-const TILES = [
-  { label: "CHAT", route: "/chat" as const, desc: "Talk to your AI" },
-  { label: "SETTINGS", route: "/dashboard/settings" as const, desc: "API key, model, notifications" },
-  { label: "MEMORY", route: "/dashboard/memory" as const, desc: "Saved facts & reflections" },
-  { label: "SOUL", route: "/dashboard/soul" as const, desc: "AI's core personality" },
-];
+// ── Single tile ───────────────────────────────────────────────────────────────
+
+function Tile({
+  label,
+  sub,
+  onPress,
+  style,
+  delay = 0,
+  disabled = false,
+}: {
+  label: string;
+  sub?: string;
+  onPress?: () => void;
+  style?: object;
+  delay?: number;
+  disabled?: boolean;
+}) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(8)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 420,
+        delay,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 420,
+        delay,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[{ opacity, transform: [{ translateY }] }, style]}>
+      <TouchableOpacity
+        style={[sty.tile, disabled && sty.tileDisabled]}
+        onPress={disabled ? undefined : onPress}
+        activeOpacity={disabled ? 1 : 0.65}
+      >
+        <Text style={sty.tileLabel}>{label}</Text>
+        {sub ? <Text style={sty.tileSub}>{sub}</Text> : null}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const [aiName, setAiName] = useState("CHAT");
+
+  useEffect(() => {
+    loadSettings()
+      .then(s => { if (s.ai_name) setAiName(s.ai_name.toUpperCase()); })
+      .catch(() => {});
+  }, []);
 
   return (
-    <SafeAreaView style={styles.root}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>dashboard</Text>
-        {TILES.map((tile) => (
-          <TouchableOpacity
-            key={tile.label}
-            style={styles.tile}
-            onPress={() => router.push(tile.route)}
-            activeOpacity={0.7}
-          >
-            <View>
-              <Text style={styles.tileLabel}>{tile.label}</Text>
-              <Text style={styles.tileDesc}>{tile.desc}</Text>
-            </View>
-            <Text style={styles.tileArrow}>→</Text>
-          </TouchableOpacity>
-        ))}
+    <SafeAreaView style={sty.root}>
+      <ScrollView contentContainerStyle={sty.container} showsVerticalScrollIndicator={false}>
+
+        {/* ── Row 1: large CHAT + small stack ─────────────────────────── */}
+        <View style={sty.row}>
+          <Tile
+            label={aiName}
+            style={sty.tileLarge}
+            onPress={() => router.push("/chat")}
+            delay={60}
+          />
+          <View style={sty.colStack}>
+            <Animated.View style={[sty.tileSmall, sty.tileDeco]} />
+            <Animated.View style={[sty.tileSmall, sty.tileDeco]} />
+          </View>
+        </View>
+
+        {/* ── Row 2: small deco + large HABITAT ───────────────────────── */}
+        <View style={sty.row}>
+          <View style={sty.colStack}>
+            <Animated.View style={[sty.tileSmall, sty.tileDeco]} />
+            <Animated.View style={[sty.tileSmall, sty.tileDeco]} />
+          </View>
+          <Tile
+            label="HABITAT"
+            sub="COMING SOON"
+            style={sty.tileLarge}
+            delay={160}
+            disabled
+          />
+        </View>
+
+        {/* ── Row 3: VOICE + SETTINGS ──────────────────────────────────── */}
+        <View style={sty.row}>
+          <Tile
+            label="VOICE"
+            sub="COMING SOON"
+            style={sty.tileMid}
+            delay={240}
+            disabled
+          />
+          <Tile
+            label="SETTINGS"
+            style={sty.tileMid}
+            onPress={() => router.push("/dashboard/settings")}
+            delay={300}
+          />
+        </View>
+
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const GAP = 8;
+
+const sty = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
-  container: { paddingHorizontal: 24, paddingTop: 32, paddingBottom: 40 },
-  title: {
-    color: "rgba(255,255,255,0.4)",
-    fontSize: 9,
-    letterSpacing: 5,
-    textTransform: "uppercase",
-    marginBottom: 32,
-  },
-  tile: {
+  container: { padding: 16, gap: GAP },
+
+  row: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    marginBottom: 12,
+    gap: GAP,
   },
+
+  // Large tile — 2/3 width
+  tileLarge: {
+    flex: 2,
+    height: 180,
+  },
+
+  // Mid tile — equal halves
+  tileMid: {
+    flex: 1,
+    height: 140,
+  },
+
+  // Stack column — 1/3 width, fills row height
+  colStack: {
+    flex: 1,
+    gap: GAP,
+  },
+
+  // Small decorative square inside the stack column
+  tileSmall: {
+    flex: 1,
+    minHeight: 86,
+  },
+
+  tile: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "#000",
+    padding: 16,
+    justifyContent: "flex-end",
+  },
+
+  tileDisabled: {
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+
+  tileDeco: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#000",
+  },
+
   tileLabel: {
     color: "rgba(255,255,255,0.75)",
     fontSize: 11,
     letterSpacing: 4,
     textTransform: "uppercase",
-    marginBottom: 4,
   },
-  tileDesc: {
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 12,
-    fontWeight: "300",
-  },
-  tileArrow: {
-    color: "rgba(255,255,255,0.3)",
-    fontSize: 18,
+
+  tileSub: {
+    color: "rgba(255,255,255,0.25)",
+    fontSize: 8,
+    letterSpacing: 3,
+    textTransform: "uppercase",
+    marginTop: 5,
   },
 });

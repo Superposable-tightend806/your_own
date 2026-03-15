@@ -95,6 +95,27 @@ async def trigger_reflection(_token: str = Depends(require_auth)):
         return {"ok": False, "error": str(exc)}
 
 
+# ── Workbench latest entry ───────────────────────────────────────────────────
+
+@router.get("/workbench/latest")
+async def workbench_latest(
+    account_id: str = "default",
+    _token: str = Depends(require_auth),
+):
+    """Return the most recent workbench note for the given account."""
+    from infrastructure.autonomy.workbench import read as wb_read, _parse_entries
+    content = wb_read(account_id)
+    entries = _parse_entries(content) if content else []
+    if not entries:
+        return {"ts": None, "text": None}
+    ts, text = entries[-1]
+    # Strip markdown formatting for ticker display
+    import re
+    clean = re.sub(r"[#*_`>\[\]]+", "", text).replace("\n", " ").strip()
+    clean = re.sub(r"\s{2,}", " ", clean)
+    return {"ts": ts, "text": clean}
+
+
 # ── Public endpoints (no auth) ────────────────────────────────────────────────
 
 @router.get("/ping", dependencies=[])

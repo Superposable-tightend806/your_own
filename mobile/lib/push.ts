@@ -52,10 +52,9 @@ export async function setupPushNotifications(): Promise<void> {
         _emit(data);
 
         // Display a system notification (sound + shade) on Android
-        const title = data.title || "AI";
         const body = data.message || data.body || "";
         if (body) {
-          Pushy.notify(title, body, data);
+          Pushy.notify(data.title || "", body, data);
         }
       });
 
