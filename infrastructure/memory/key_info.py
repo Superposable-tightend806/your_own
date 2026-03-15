@@ -11,6 +11,7 @@ All LLM calls use a fast model (configurable) and are non-streaming.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -233,25 +234,35 @@ async def _complete(api_key: str, system: str, user: str) -> str:
         "max_tokens": 256,
         "stream": False,
     }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=payload,
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning("[key_info] LLM error %d: %s", resp.status, body[:200])
-                    return ""
-                data = await resp.json()
-                choices = data.get("choices") or []
-                if not choices:
-                    return ""
-                return choices[0].get("message", {}).get("content", "").strip()
-    except Exception as exc:
-        logger.warning("[key_info] _complete failed: %s", exc)
-        return ""
+    timeout = aiohttp.ClientTimeout(total=45)
+    for attempt in range(1, 4):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(
+                            "[key_info] LLM error %d on attempt %d/3: %s",
+                            resp.status,
+                            attempt,
+                            body[:200],
+                        )
+                    else:
+                        data = await resp.json()
+                        choices = data.get("choices") or []
+                        if choices:
+                            return choices[0].get("message", {}).get("content", "").strip()
+        except Exception as exc:
+            logger.warning("[key_info] _complete failed on attempt %d/3: %s", attempt, exc)
+
+        if attempt < 3:
+            await asyncio.sleep(1.5 * attempt)
+
+    return ""
 
 
 # ── Format conversation pairs for the prompt ──────────────────────────────────
@@ -383,6 +394,8 @@ async def store_fact_with_dedup(
     Used by both ``extract_and_store`` (chat) and the workbench rotator.
     Returns dict with fact/category/impressive/id on success, None on skip.
     """
+    from infrastructure.memory.chroma_pipeline import get_chroma_pipeline
+
     pipeline = get_chroma_pipeline()
     similar = pipeline.find_similar(account_id=account_id, memory=fact)
 

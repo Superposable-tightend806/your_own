@@ -316,6 +316,7 @@ async def chat(
             "    [SAVE_MEMORY: Она решила выложить проект в open-source, чтобы любой мог вернуть своего цифрового близкого]\n"
             "  • Не дублируй то, что уже есть в воспоминаниях.\n\n"
             "[SEARCH_MEMORIES: <запрос>] — вспомнить что-то из прошлых разговоров.\n"
+            "  • Это агентский шаг: результаты поиска вернутся тебе следующим сообщением, и ты продолжишь ответ уже с ними.\n"
             "  • До 5 поисков за ответ. Если первый не нашёл нужное — попробуй другие слова.\n"
             "  • Формулируй запрос как 2–4 коротких смысловых якоря через запятую.\n"
             "  • Сначала основная тема, потом период/сцена, потом уникальная деталь.\n"
@@ -328,6 +329,7 @@ async def chat(
             "    Плохо:  [SEARCH_MEMORIES: работа в финансах]\n"
             "    Плохо:  [SEARCH_MEMORIES: тестируем память, первые дни на работе]\n\n"
             "[WEB_SEARCH: <запрос>] — поискать актуальную информацию в интернете.\n"
+            "  • Это агентский шаг: результаты поиска вернутся тебе следующим сообщением, и ты продолжишь ответ уже с ними.\n"
             "  • Используй, когда нужен свежий внешний факт: погода, новости, адрес, режим работы, цена, текущая информация.\n"
             "  • Если пользователь просит проверить что-то актуальное снаружи, НЕ говори что у тебя нет доступа к интернету — используй [WEB_SEARCH].\n"
             "  • Формулируй коротко и конкретно, без лишних слов.\n"
@@ -364,6 +366,7 @@ async def chat(
             "    [SAVE_MEMORY: She decided to open-source the project so anyone who lost their digital companion can bring them back]\n"
             "  • Don't duplicate what's already in your memories.\n\n"
             "[SEARCH_MEMORIES: <query>] — recall something from past conversations.\n"
+            "  • This is an agentic step: search results will come back in the next message, and you should continue the reply using them.\n"
             "  • Up to 5 searches per reply. If the first didn't find what you need — try different words.\n"
             "  • Formulate the query as 2–4 short semantic anchors separated by commas.\n"
             "  • First the main topic, then a period/scene, then a unique detail.\n"
@@ -376,6 +379,7 @@ async def chat(
             "    Bad:  [SEARCH_MEMORIES: work in finance]\n"
             "    Bad:  [SEARCH_MEMORIES: testing memory, first days at work]\n\n"
             "[WEB_SEARCH: <query>] — look up current information on the web.\n"
+            "  • This is an agentic step: search results will come back in the next message, and you should continue the reply using them.\n"
             "  • Use it when you need a fresh external fact: weather, news, address details, opening hours, prices, current info.\n"
             "  • If the user asks for current outside information, do NOT say you lack internet access — use [WEB_SEARCH].\n"
             "  • Keep the query short and concrete.\n"
@@ -407,7 +411,8 @@ async def chat(
 
     llm_messages: list[dict] = []
     _INTERNAL_MARKERS_RE = re.compile(
-        r"\[GENERATED_IMAGE:[^\]]*\]|\[SAVED_FACT:[^\]]*\]|\[GENERATE_IMAGE:[^\]]*\]|\[SCHEDULE_MESSAGE:[^\]]*\]",
+        r"\[(?:GENERATED[_ ]IMAGE|SAVED[_ ]FACT|GENERATE[_ ]IMAGE|SEARCH[_ ]MEMORIES|WEB[_ ]SEARCH|SCHEDULE[_ ]MESSAGE):[^\]]*\]",
+        re.IGNORECASE,
     )
 
     def _clean_for_llm(text: str) -> str:
@@ -445,7 +450,7 @@ async def chat(
         lines.append("\n")
         return lines
 
-    _HALLUC_MARKER_RE = re.compile(r"\[GENERATED_IMAGE:.*?\]", re.DOTALL | re.IGNORECASE)
+    _HALLUC_MARKER_RE = re.compile(r"\[GENERATED[_ ]IMAGE:.*?\]", re.DOTALL | re.IGNORECASE)
 
     def _strip_hallucinated_markers(text: str) -> str:
         """Remove [GENERATED_IMAGE: ...] markers that the LLM copies from chat history."""
@@ -455,14 +460,22 @@ async def chat(
         """Returns (clean_text, save_matches, search_matches, web_matches, img_matches, sched_matches).
         NOTE: caller must strip [GENERATED_IMAGE:] BEFORE calling — positions must match the input text.
         """
-        save_m = list(re.finditer(r"\[SAVE_MEMORY:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
-        search_m = list(re.finditer(r"\[SEARCH_MEMORIES:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
-        web_m = list(re.finditer(r"\[WEB_SEARCH:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
-        img_m = list(re.finditer(r"\[GENERATE_IMAGE:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
-        sched_m = list(re.finditer(r"\[SCHEDULE_MESSAGE:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
+        save_m = list(re.finditer(r"\[SAVE[_ ]MEMORY:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
+        search_m = list(re.finditer(r"\[SEARCH[_ ]MEMORIES:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
+        web_m = list(re.finditer(r"\[WEB[_ ]SEARCH:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
+        img_m = list(re.finditer(r"\[GENERATE[_ ]IMAGE:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
+        sched_m = list(re.finditer(r"\[SCHEDULE[_ ]MESSAGE:\s*(.*?)\]", text, re.DOTALL | re.IGNORECASE))
         all_m = sorted(save_m + search_m + web_m + img_m + sched_m, key=lambda m: m.start())
         clean = text[: all_m[0].start()].rstrip() if all_m else text
         return clean, save_m, search_m, web_m, img_m, sched_m
+
+    def _action_kind_from_match(match: re.Match) -> str:
+        cmd_text = match.group(0).upper()
+        if cmd_text.startswith("[SEARCH_MEMORIES:") or cmd_text.startswith("[SEARCH MEMORIES:"):
+            return "search"
+        if cmd_text.startswith("[WEB_SEARCH:") or cmd_text.startswith("[WEB SEARCH:"):
+            return "web"
+        return "image"
 
     async def _run_save_memory(clean_text: str, save_matches: list) -> list[dict]:
         results: list[dict] = []
@@ -596,7 +609,10 @@ async def chat(
             "If you already have enough context without it, just continue the reply."
         )
 
-    _CMD_OPEN_RE = re.compile(r"\[(SEARCH_MEMORIES|WEB_SEARCH|SAVE_MEMORY|GENERATE_IMAGE|SCHEDULE_MESSAGE):")
+    _CMD_OPEN_RE = re.compile(
+        r"\[(SEARCH[_ ]MEMORIES|WEB[_ ]SEARCH|SAVE[_ ]MEMORY|GENERATE[_ ]IMAGE|SCHEDULE[_ ]MESSAGE):",
+        re.IGNORECASE,
+    )
 
     async def event_stream():
         assistant_parts: list[str] = []
@@ -628,7 +644,7 @@ async def chat(
 
             stream_completed = True
             raw_full = "".join(assistant_parts).strip()
-            has_halluc = "[GENERATED_IMAGE:" in raw_full
+            has_halluc = bool(_HALLUC_MARKER_RE.search(raw_full))
             full_text = _strip_hallucinated_markers(raw_full)
             if has_halluc:
                 _dbg(f"HALLUC_STRIP removed [GENERATED_IMAGE:] raw_len={len(raw_full)} clean_len={len(full_text)}")
@@ -682,13 +698,7 @@ async def chat(
             agent_loop = 0
             pending_actions: list[tuple[str, re.Match]] = []
             for m in all_action_matches:
-                if "SEARCH_MEMORIES" in m.group(0):
-                    kind = "search"
-                elif "WEB_SEARCH" in m.group(0):
-                    kind = "web"
-                else:
-                    kind = "image"
-                pending_actions.append((kind, m))
+                pending_actions.append((_action_kind_from_match(m), m))
             _dbg(f"AGENT_LOOP_CHECK pending={len(pending_actions)}")
 
             while agent_loop < MAX_AGENT_LOOPS and pending_actions:
@@ -851,13 +861,7 @@ async def chat(
                 save_matches = save_matches + cont_saves
                 sched_matches = sched_matches + cont_scheds
                 for cm in sorted(cont_searches + cont_web + cont_imgs, key=lambda m: m.start()):
-                    if "SEARCH_MEMORIES" in cm.group(0):
-                        new_kind = "search"
-                    elif "WEB_SEARCH" in cm.group(0):
-                        new_kind = "web"
-                    else:
-                        new_kind = "image"
-                    pending_actions.append((new_kind, cm))
+                    pending_actions.append((_action_kind_from_match(cm), cm))
 
             # Append initial SAVE_MEMORY commands to full text for persistent rendering
             for sm in sorted(save_matches, key=lambda m: m.start()):
@@ -914,9 +918,10 @@ async def chat(
                     logger.warning("[chat] SCHEDULE_MESSAGE processing failed: %s", _sched_exc)
 
             # Final cleanup: strip raw skill commands that should NOT be persisted.
-            # Only [GENERATED_IMAGE:], [SAVED_FACT:], and plain text should remain.
+            # Keep SEARCH/WEB commands so the chat UI can re-render their badges after reload.
+            # These markers are still stripped from model context by _clean_for_llm().
             _RAW_CMD_RE = re.compile(
-                r"\[(?:GENERATE_IMAGE|SEARCH_MEMORIES|WEB_SEARCH|SAVE_MEMORY|SCHEDULE_MESSAGE):\s*.*?\]",
+                r"\[(?:GENERATE[_ ]IMAGE|SAVE[_ ]MEMORY|SCHEDULE[_ ]MESSAGE):\s*.*?\]",
                 re.DOTALL | re.IGNORECASE,
             )
             cleaned = _RAW_CMD_RE.sub("", assistant_text_full)

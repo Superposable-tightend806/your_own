@@ -49,7 +49,7 @@ type InlinePart =
 // Groups: 1=skill_name, 2=skill_arg | 3=fact_cat, 4=fact_stars, 5=fact_text | 6=img_path, 7=img_model, 8=img_prompt
 // GENERATE_IMAGE is matched but not rendered — just hidden from display (legacy DB entries)
 const ALL_COMMANDS_RE =
-  /\[(SAVE_MEMORY|SEARCH_MEMORIES|WEB_SEARCH|GENERATE_IMAGE|SCHEDULE_MESSAGE):\s*(.*?)\]|\[SAVED_FACT:\s*(.*?)\s*\|\s*(\d)\s*\|\s*(.*?)\]|\[GENERATED_IMAGE:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/gs;
+  /\[(SAVE(?:_| )MEMORY|SEARCH(?:_| )MEMORIES|WEB(?:_| )SEARCH|GENERATE(?:_| )IMAGE|SCHEDULE(?:_| )MESSAGE):\s*(.*?)\]|\[SAVED(?:_| )FACT:\s*(.*?)\s*\|\s*(\d)\s*\|\s*(.*?)\]|\[GENERATED(?:_| )IMAGE:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/gs;
 
 const KIND_MAP: Record<string, SkillBadgeKind> = {
   SAVE_MEMORY: "save",
@@ -71,11 +71,19 @@ const BADGE_ICONS: Record<SkillBadgeKind, string> = {
 
 const PARTIAL_PREFIXES = [
   "[SAVE_MEMORY:",
+  "[SAVE MEMORY:",
   "[SEARCH_MEMORIES:",
+  "[SEARCH MEMORIES:",
   "[WEB_SEARCH:",
+  "[WEB SEARCH:",
   "[SAVED_FACT:",
+  "[SAVED FACT:",
   "[GENERATED_IMAGE:",
+  "[GENERATED IMAGE:",
+  "[GENERATE_IMAGE:",
+  "[GENERATE IMAGE:",
   "[SCHEDULE_MESSAGE:",
+  "[SCHEDULE MESSAGE:",
 ];
 
 function trimPartialCommand(text: string): string {
@@ -102,11 +110,12 @@ function parseInlineParts(rawContent: string, isStreaming: boolean): InlinePart[
     if (before) parts.push({ type: "text", text: before });
 
     if (match[1]) {
-      if (match[1] === "SAVE_MEMORY" || match[1] === "SCHEDULE_MESSAGE") {
+      const normalized = match[1].replace(" ", "_");
+      if (normalized === "SAVE_MEMORY" || normalized === "SCHEDULE_MESSAGE") {
         lastIndex = match.index! + match[0].length;
         continue;
       }
-      if (match[1] === "GENERATE_IMAGE") {
+      if (normalized === "GENERATE_IMAGE") {
         const raw = match[2] ? match[2].trim() : "";
         const pipeIdx = raw.indexOf("|");
         const prompt = pipeIdx >= 0 ? raw.slice(pipeIdx + 1).trim() : raw;
@@ -114,7 +123,7 @@ function parseInlineParts(rawContent: string, isStreaming: boolean): InlinePart[
         lastIndex = match.index! + match[0].length;
         continue;
       }
-      const kind = KIND_MAP[match[1]] ?? "search";
+      const kind = KIND_MAP[normalized] ?? "search";
       parts.push({
         type: "skill",
         cmd: { kind, argument: match[2] ? match[2].trim() : "" },

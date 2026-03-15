@@ -27,7 +27,16 @@ const proc = spawn(
     "--reload-exclude", "logs",
     "--reload-exclude", "chroma_data",
   ],
-  { cwd: ROOT, stdio: "inherit", shell: false }
+  {
+    cwd: ROOT,
+    stdio: "inherit",
+    shell: false,
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8",
+      PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+    },
+  }
 );
 
 proc.on("error", (err) => {

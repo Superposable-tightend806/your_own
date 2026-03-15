@@ -10,6 +10,16 @@ def setup_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     if logger.handlers:
         return logger  # already configured
 
+    # Force UTF-8 console output on Windows so logs with Cyrillic/emoji do not
+    # explode with cp1251 encoding errors in dev terminals / IDE consoles.
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except Exception:
+                pass
+
     logger.setLevel(level)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
