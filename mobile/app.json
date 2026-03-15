@@ -23,11 +23,7 @@
         "backgroundImage": "./assets/android-icon-background.png"
       },
       "package": "com.yourown.app",
-      "softwareKeyboardLayoutMode": "adjustResize",
-      "notification": {
-        "icon": "./assets/notification-icon.png",
-        "color": "#000000"
-      },
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",

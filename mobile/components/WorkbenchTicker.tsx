@@ -89,21 +89,24 @@ export function WorkbenchBar({
 
   return (
     <Animated.View style={[sty.bar, { height: barH }]}>
-      {/* Measure container width */}
+      {/*
+        Measurement text: lives OUTSIDE the overflow:hidden inner container
+        so its natural (unwrapped) width is reported correctly by onLayout.
+        Give it a huge explicit width so it never wraps.
+      */}
+      <Text
+        numberOfLines={1}
+        style={[sty.tickerText, sty.measurer]}
+        onLayout={e => setTextW(e.nativeEvent.layout.width)}
+      >
+        {text}
+      </Text>
+
+      {/* Visible clip container */}
       <View
         style={sty.inner}
         onLayout={e => setContainerW(e.nativeEvent.layout.width)}
       >
-        {/* Hidden clone — measures true text width without wrapping */}
-        <Text
-          numberOfLines={1}
-          style={[sty.tickerText, sty.hidden]}
-          onLayout={e => setTextW(e.nativeEvent.layout.width)}
-        >
-          {text}
-        </Text>
-
-        {/* Scrolling text */}
         <Animated.Text
           numberOfLines={1}
           style={[sty.tickerText, { transform: [{ translateX: scrollX }] }]}
@@ -148,8 +151,11 @@ const sty = StyleSheet.create({
     fontWeight: "300",
     letterSpacing: 0.4,
   },
-  hidden: {
+  measurer: {
     position: "absolute",
     opacity: 0,
+    top: 0,
+    left: 0,
+    width: 9999,   // unconstrained — text reports its natural width
   },
 });
