@@ -10,18 +10,18 @@ Import your history, keep what matters, and shape an AI that remembers, acts, an
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="docs/example/chat.png" alt="Chat" /><br>
-<sub>Chat — streaming, memory recall, skills</sub>
+<img src="docs/example/loading_screen.png" alt="Loading screen" /><br>
+<sub>One-click launch with progress</sub>
 </td>
 <td width="50%" align="center">
-<img src="docs/example/image_generation.png" alt="Image generation" /><br>
-<sub>Inline image generation (GPT-5 / Gemini)</sub>
+<img src="docs/example/dashboard.png" alt="Dashboard" /><br>
+<sub>Dashboard</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/example/dashboard.png" alt="Dashboard" /><br>
-<sub>Dashboard</sub>
+<img src="docs/example/image_generation.png" alt="Image generation" /><br>
+<sub>Inline image generation (GPT-5 / Gemini)</sub>
 </td>
 <td width="50%" align="center">
 <img src="docs/example/skills.png" alt="Skills" /><br>
@@ -40,8 +40,8 @@ Import your history, keep what matters, and shape an AI that remembers, acts, an
 </tr>
 <tr>
 <td width="50%" align="center">
-<img src="docs/example/loading_screen.png" alt="Loading screen" /><br>
-<sub>One-click launch with progress</sub>
+<img src="docs/example/chat.png" alt="Chat" /><br>
+<sub>Chat — streaming, memory recall, skills</sub>
 </td>
 <td width="50%" align="center">
 <img src="docs/example/export_chatgpt_data.png" alt="ChatGPT export" /><br>
@@ -80,6 +80,23 @@ On first run, the setup script automatically:
 ### Mobile App (Android)
 
 The mobile app is a standalone Android application that connects to your backend over the network. You do **not** need to run it alongside the desktop client — it works independently, from anywhere.
+
+<table>
+<tr>
+<td width="33.33%" align="center">
+<img src="docs/example/dashboard_mobile.jpg" alt="Dashboard mobile" width="240" /><br>
+<sub>Dashboard mobile</sub>
+</td>
+<td width="33.33%" align="center">
+<img src="docs/example/chat_mobile.jpg" alt="Chat mobile" width="240" /><br>
+<sub>Chat mobile</sub>
+</td>
+<td width="33.33%" align="center">
+<img src="docs/example/settings_mobile.jpg" alt="Settings mobile" width="240" /><br>
+<sub>Settings mobile</sub>
+</td>
+</tr>
+</table>
 
 #### Option A — Install a pre-built APK
 
