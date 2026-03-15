@@ -2,7 +2,7 @@
  * Chat screen with SSE streaming, inverted FlatList, markdown and image attachments.
  * Uses react-native-keyboard-controller for proper keyboard handling in chat layout.
  */
-import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -13,15 +13,10 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  type ScrollViewProps,
 } from "react-native";
 import { Stack } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import {
-  KeyboardChatScrollView,
-  KeyboardStickyView,
-  type KeyboardChatScrollViewProps,
-} from "react-native-keyboard-controller";
+import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { apiFetch, apiFetchStreaming, loadSettings, loadWorkbenchLatest } from "@/lib/api";
 import type { HistoryPair, Message } from "@/lib/types";
 import MessageContent from "@/components/MessageContent";
@@ -58,21 +53,6 @@ function pairToMessages(pair: HistoryPair): Message[] {
   }
   return out;
 }
-
-// ── Scroll wrapper for keyboard-aware inverted FlatList ──────────────────────
-
-type Ref = React.ElementRef<typeof KeyboardChatScrollView>;
-
-const ChatScrollView = forwardRef<Ref, ScrollViewProps & KeyboardChatScrollViewProps>(
-  (props, ref) => (
-    <KeyboardChatScrollView
-      ref={ref}
-      automaticallyAdjustContentInsets={false}
-      contentInsetAdjustmentBehavior="never"
-      {...props}
-    />
-  ),
-);
 
 // ── Message bubble ───────────────────────────────────────────────────────────
 
@@ -131,11 +111,6 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList<Message>>(null);
 
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
-
-  const renderScrollComponent = useCallback(
-    (props: ScrollViewProps) => <ChatScrollView {...props} />,
-    [],
-  );
 
   // ── Load initial data ────────────────────────────────────────────────────
 
@@ -428,7 +403,6 @@ export default function ChatScreen() {
         keyExtractor={m => m.id}
         renderItem={renderItem}
         inverted
-        renderScrollComponent={renderScrollComponent}
         contentContainerStyle={styles.list}
         onEndReached={() => { if (hasMore && !loadingHistory) void loadHistory(cursor); }}
         onEndReachedThreshold={0.3}
