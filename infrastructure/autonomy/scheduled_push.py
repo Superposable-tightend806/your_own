@@ -71,9 +71,9 @@ async def _build_validation_context(account_id: str, message: str) -> dict:
             u = p.get("user_text", "")
             a = p.get("assistant_text", "")
             if u:
-                dialogue_lines.append(f"Она: {u[:200]}")
+                dialogue_lines.append(f"Она: {u}")
             if a:
-                dialogue_lines.append(f"Ты: {a[:200]}")
+                dialogue_lines.append(f"Ты: {a}")
 
     workbench_content = wb.read(account_id) or "(пусто)"
 

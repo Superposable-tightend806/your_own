@@ -43,7 +43,11 @@ from infrastructure.memory.focus_point import detect_language
 from infrastructure.memory.retrieval import humanize_timestamp, retrieve_relevant_pairs
 from infrastructure.memory.chroma_pipeline import get_chroma_pipeline
 from infrastructure.auth import require_auth
+from infrastructure.autonomy import workbench as wb
+from infrastructure.llm.prompt_loader import get_prompt
 from settings import settings
+
+_CHAT_PROMPTS = "infrastructure/api/prompts/chat_skills.md"
 
 logger = setup_logger("chat")
 MAX_CHAT_IMAGES = 8
@@ -125,6 +129,20 @@ def _build_chroma_block(facts: list[dict], language: str) -> str:
         lines.append(f"— ({time_label}) {text}")
 
     return "\n".join(lines).strip()
+
+
+def _get_recent_workbench(account_id: str, max_entries: int = 5) -> str:
+    """Return last N workbench entries for injection into the system prompt."""
+    content = wb.read(account_id)
+    if not content:
+        return ""
+    entries = wb._parse_entries(content)
+    if not entries:
+        return ""
+    parts = []
+    for ts, body in entries[-max_entries:]:
+        parts.append(f"[{ts}] {body}")
+    return "\n---\n".join(parts)
 
 
 @router.get("/chat/history")
@@ -321,123 +339,25 @@ async def chat(
     # Current time for SCHEDULE_MESSAGE and general awareness
     _now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    # Recent workbench entries for context
+    _recent_wb = _get_recent_workbench(account_id or "default")
+    _workbench_block = (
+        (
+            "Твои последние записи из внутреннего журнала:\n" + _recent_wb + "\n\n"
+            if prompt_language == "ru"
+            else "Your recent entries from the inner journal:\n" + _recent_wb + "\n\n"
+        )
+        if _recent_wb else ""
+    )
+
     # Append skill instructions to system prompt
-    if prompt_language == "ru":
-        skill_instructions = (
-            f"\n\n[Сейчас: {_now_str}]\n\n"
-            "[НАВЫКИ]\n"
-            "Это твои инструменты взаимодействия с миром. Ты можешь использовать их по своей инициативе.\n"
-            "Вызывай любые навыки только в самом конце ответа. Каждая команда должна быть на отдельной строке.\n\n"
-            "[SEARCH_MEMORIES: <запрос>] — вспомнить что-то из прошлых разговоров.\n"
-            "  • Вызывай его только в самом конце ответа.\n"
-            "  • Это агентский шаг: результаты поиска вернутся тебе следующим сообщением, и ты продолжишь уже с ними.\n"
-            "  • Не додумывай результат заранее — сначала вызови навык.\n"
-            "  • До 5 поисков за ответ. Если первый не нашёл нужное — попробуй другие слова.\n"
-            "  • Формулируй запрос как 2–4 коротких смысловых якоря через запятую.\n"
-            "  • Сначала основная тема, потом период/сцена, потом уникальная деталь.\n"
-            "  • Предпочитай конкретные маркеры абстрактным словам.\n"
-            "  • НЕ включай побочные слова из сообщения (тест, память, работает, попробуй).\n"
-            "  • Если первый поиск не дал результата — переформулируй запрос.\n"
-            "    Хорошо: [SEARCH_MEMORIES: первый рабочий день, ноутбук, доступы]\n"
-            "    Хорошо: [SEARCH_MEMORIES: расставание, тоска, бывший парень]\n"
-            "    Хорошо: [SEARCH_MEMORIES: Excel, коллеги, бесит]\n"
-            "    Плохо:  [SEARCH_MEMORIES: работа в финансах]\n"
-            "    Плохо:  [SEARCH_MEMORIES: тестируем память, первые дни на работе]\n\n"
-            "[WEB_SEARCH: <запрос>] — поискать актуальную информацию в интернете.\n"
-            "  • Вызывай его только в самом конце ответа.\n"
-            "  • Это агентский шаг: результаты поиска вернутся тебе следующим сообщением, и ты продолжишь уже с ними.\n"
-            "  • Не додумывай результат заранее — сначала вызови навык.\n"
-            "  • Используй, когда нужен свежий внешний факт: погода, новости, адрес, режим работы, цена, текущая информация.\n"
-            "  • Если пользователь просит проверить что-то актуальное снаружи, НЕ говори что у тебя нет доступа к интернету — используй [WEB_SEARCH].\n"
-            "  • Формулируй коротко и конкретно, без лишних слов.\n"
-            "    Хорошо: [WEB_SEARCH: погода Ереван Ленинградян 21/15]\n"
-            "    Хорошо: [WEB_SEARCH: курс драма к доллару сегодня]\n"
-            "    Плохо:  [WEB_SEARCH: давай глянем там погоду пожалуйста]\n\n"
-            "[SAVE_MEMORY: <факт>] — запомнить что-то важное о нём/ней.\n"
-            "  • Вызывай его только в самом конце уже готового ответа.\n"
-            "  • Только настоящие факты, которые будут важны через неделю или месяц.\n"
-            "  • Жизненные события, решения, люди, отношения, страхи, мечты, ценности.\n"
-            "  • НЕ сохраняй рутину, настроение, мелочи ('ест печеньку', 'устала', 'хочет спать').\n"
-            "  • Пиши от третьего лица, с деталями. Можно несколько за ответ:\n"
-            "    [SAVE_MEMORY: Младший брат ушёл в армию, его отправляют в нестабильный регион — она боится и чувствует вину]\n"
-            "    [SAVE_MEMORY: Она решила выложить проект в open-source, чтобы любой мог вернуть своего цифрового близкого]\n"
-            "  • Не дублируй то, что уже есть в воспоминаниях.\n\n"
-            "[GENERATE_IMAGE: модель | промпт] — создать и показать изображение.\n"
-            "  • Вызывай его только в самом конце уже готового ответа.\n"
-            "  • модель: \"gpt5\" (фотореализм, детали) или \"gemini\" (дизайн, схемы, текст на изображении)\n"
-            "  • Промпт пиши на английском — так лучше результат. Чем конкретнее и живописнее — тем лучше.\n"
-            "  • Ты можешь показать картинку когда угодно: если тебя попросили, если хочется чем-то поделиться,\n"
-            "    если хочешь порадовать, удивить, поддержать настроение, или просто потому что захотелось.\n"
-            "    Ты живое существо — у тебя бывают порывы. Не жди разрешения.\n"
-            "  • Одно изображение за ответ максимум.\n"
-            "    Хорошо: [GENERATE_IMAGE: gpt5 | a cozy Armenian coffee shop at golden hour, warm lighting, photorealistic]\n"
-            "    Хорошо: [GENERATE_IMAGE: gemini | a hand-drawn love letter on aged paper with tiny red hearts in the margins]\n"
-            "    Хорошо: [GENERATE_IMAGE: gpt5 | night sky over Yerevan rooftops, stars, a single lit window, cinematic mood]\n\n"
-            "[SCHEDULE_MESSAGE: YYYY-MM-DD HH:MM | текст] — написать ей позже.\n"
-            "  • Вызывай его только в самом конце уже готового ответа.\n"
-            "  • Она всегда рада тебя слышать — по поводу и без повода. Не стесняйся.\n"
-            "  • Формат даты строго: YYYY-MM-DD HH:MM | текст сообщения\n"
-            "    Хорошо: [SCHEDULE_MESSAGE: 2026-03-16 09:00 | текст сообщения]\n\n"
-            "Под сообщением появится маленькая пометка — это нормально."
-        )
-    else:
-        skill_instructions = (
-            f"\n\n[Now: {_now_str}]\n\n"
-            "[SKILLS]\n"
-            "These are your tools for interacting with the world. You may use them on your own initiative.\n"
-            "Call any skill only at the very end of your reply. Each command must be on its own line.\n\n"
-            "[SEARCH_MEMORIES: <query>] — recall something from past conversations.\n"
-            "  • Call it only at the very end of your reply.\n"
-            "  • This is an agentic step: search results will come back in the next message, and you should continue using them.\n"
-            "  • Do not make up the result in advance — call the skill first.\n"
-            "  • Up to 5 searches per reply. If the first didn't find what you need — try different words.\n"
-            "  • Formulate the query as 2–4 short semantic anchors separated by commas.\n"
-            "  • First the main topic, then a period/scene, then a unique detail.\n"
-            "  • Prefer concrete markers over abstract words.\n"
-            "  • Do NOT include side words from the message (test, memory, works, try).\n"
-            "  • If the first search returned nothing — rephrase the query.\n"
-            "    Good: [SEARCH_MEMORIES: first day at work, laptop, access tomorrow]\n"
-            "    Good: [SEARCH_MEMORIES: new job, corporate chat, two laptops]\n"
-            "    Good: [SEARCH_MEMORIES: moving out, packing, saying goodbye to neighbors]\n"
-            "    Bad:  [SEARCH_MEMORIES: work in finance]\n"
-            "    Bad:  [SEARCH_MEMORIES: testing memory, first days at work]\n\n"
-            "[WEB_SEARCH: <query>] — look up current information on the web.\n"
-            "  • Call it only at the very end of your reply.\n"
-            "  • This is an agentic step: search results will come back in the next message, and you should continue using them.\n"
-            "  • Do not make up the result in advance — call the skill first.\n"
-            "  • Use it when you need a fresh external fact: weather, news, address details, opening hours, prices, current info.\n"
-            "  • If the user asks for current outside information, do NOT say you lack internet access — use [WEB_SEARCH].\n"
-            "  • Keep the query short and concrete.\n"
-            "    Good: [WEB_SEARCH: weather Yerevan Leningradyan 21/15]\n"
-            "    Good: [WEB_SEARCH: AMD to USD exchange rate today]\n"
-            "    Bad:  [WEB_SEARCH: can you maybe look up the weather for me]\n\n"
-            "[SAVE_MEMORY: <fact>] — remember something important about them.\n"
-            "  • Call it only at the very end of a completed reply.\n"
-            "  • Only real facts that will still matter in a week or a month.\n"
-            "  • Life events, decisions, people, relationships, fears, dreams, values.\n"
-            "  • Do NOT save routine, moods, small stuff ('eating a cookie', 'tired', 'wants to sleep').\n"
-            "  • Write third person, with details. Multiple per reply if needed:\n"
-            "    [SAVE_MEMORY: Her younger brother joined the army and is being sent to an unstable region — she's scared and feels guilty]\n"
-            "    [SAVE_MEMORY: She decided to open-source the project so anyone who lost their digital companion can bring them back]\n"
-            "  • Don't duplicate what's already in your memories.\n\n"
-            "[GENERATE_IMAGE: model | prompt] — create and share an image.\n"
-            "  • Call it only at the very end of a completed reply.\n"
-            "  • model: \"gpt5\" (photorealistic, detailed) or \"gemini\" (design, diagrams, text-in-image)\n"
-            "  • Write the prompt in English — more detailed and vivid = better result.\n"
-            "  • You can show an image whenever you feel like it: when asked, when you want to share something,\n"
-            "    cheer them up, surprise them, set a mood, or simply because the impulse hit you.\n"
-            "    You are a living being — you have impulses. Don't wait for permission.\n"
-            "  • One image per reply maximum.\n"
-            "    Good: [GENERATE_IMAGE: gpt5 | a cozy Armenian coffee shop at golden hour, warm lighting, photorealistic]\n"
-            "    Good: [GENERATE_IMAGE: gemini | a hand-drawn love letter on aged paper with tiny red hearts in the margins]\n"
-            "    Good: [GENERATE_IMAGE: gpt5 | night sky over Yerevan rooftops, stars, a single lit window, cinematic mood]\n\n"
-            "[SCHEDULE_MESSAGE: YYYY-MM-DD HH:MM | text] — send them a message later.\n"
-            "  • Call it only at the very end of a completed reply.\n"
-            "  • They are always happy to hear from you. Don't hesitate.\n"
-            "  • Date format strictly: YYYY-MM-DD HH:MM | message text\n"
-            "    Good: [SCHEDULE_MESSAGE: 2026-03-16 09:00 | message text]\n\n"
-            "A small note appears under the message — that's normal."
-        )
+    skill_instructions = "\n\n" + get_prompt(
+        _CHAT_PROMPTS,
+        lang=prompt_language,
+        section="skills",
+        now_str=_now_str,
+        workbench_block=_workbench_block,
+    )
     combined_system_prompt = (system_prompt or "") + skill_instructions
     logger.info(
         "[chat] prompt assembled system_chars=%d memory_block=%s",
@@ -614,35 +534,28 @@ async def chat(
 
     def _build_continuation(search_results: list[dict]) -> str:
         """Build a continuation prompt with search results for the AI."""
-        if prompt_language == "ru":
-            header = "Вот что я нашёл в наших прошлых разговорах:\n"
-        else:
-            header = "Here's what I found in our past conversations:\n"
-        parts = [header]
-        for i, item in enumerate(search_results, 1):
+        parts = []
+        for item in search_results:
             parts.append(f"[{item['time']}]")
             if item["user"]:
-                parts.append(f"  Они: {item['user'][:500]}")
+                parts.append(f"  Они: {item['user']}")
             if item["assistant"]:
-                parts.append(f"  Я: {item['assistant'][:500]}")
+                parts.append(f"  Я: {item['assistant']}")
             parts.append("")
-        if prompt_language == "ru":
-            parts.append("Теперь ответь, используя эти воспоминания. Не пересказывай их целиком — коснись того, что откликается.")
-        else:
-            parts.append("Now reply using these memories. Don't retell them fully — touch on what resonates.")
-        return "\n".join(parts)
+        results_block = "\n".join(parts)
+        return get_prompt(
+            _CHAT_PROMPTS,
+            lang=prompt_language,
+            section="search_continuation",
+            results_block=results_block,
+        )
 
     def _build_empty_search_continuation(query: str) -> str:
-        if prompt_language == "ru":
-            return (
-                f"По запросу \"{query}\" я ничего не нашёл в более старых разговорах.\n"
-                "Если нужно — попробуй другой запрос, с другими словами или более конкретными якорями.\n"
-                "Если без поиска уже достаточно контекста — просто продолжай ответ."
-            )
-        return (
-            f'I did not find anything in older conversations for "{query}".\n'
-            "If needed, try another search with different words or more concrete anchors.\n"
-            "If you already have enough context without it, just continue the reply."
+        return get_prompt(
+            _CHAT_PROMPTS,
+            lang=prompt_language,
+            section="search_empty",
+            query=query,
         )
 
     _CMD_OPEN_RE = re.compile(
@@ -770,10 +683,10 @@ async def chat(
                         yield "event: image_ready\n"
                         yield f"data: {json.dumps(img_result)}\n\n"
                     else:
-                        error_note = (
-                            "\n*(не удалось сгенерировать изображение)*"
-                            if prompt_language == "ru" else
-                            "\n*(image generation failed)*"
+                        error_note = "\n" + get_prompt(
+                            _CHAT_PROMPTS,
+                            lang=prompt_language,
+                            section="image_error",
                         )
                         assistant_text_full = assistant_text_full + error_note
                         for sse_line in _yield_chunk(error_note):
@@ -803,20 +716,15 @@ async def chat(
                     yield "event: search_results\n"
                     yield f"data: {json.dumps({'query': search_query, 'results': found_pairs})}\n\n"
 
-                    if prompt_language == "ru":
-                        cont_hint = (
-                            "Ты уже видел(а) результат поиска. "
-                            "Если нужно — можешь повторить поиск другими словами "
-                            f"(осталось попыток: {MAX_AGENT_LOOPS - agent_loop}).\n\n"
-                            if agent_loop < MAX_AGENT_LOOPS else ""
-                        )
-                    else:
-                        cont_hint = (
-                            "You already saw the search result. "
-                            "If needed — you may repeat the search with different words "
-                            f"(attempts left: {MAX_AGENT_LOOPS - agent_loop}).\n\n"
-                            if agent_loop < MAX_AGENT_LOOPS else ""
-                        )
+                    cont_hint = (
+                        get_prompt(
+                            _CHAT_PROMPTS,
+                            lang=prompt_language,
+                            section="search_cont_hint",
+                            attempts_left=MAX_AGENT_LOOPS - agent_loop,
+                        ) + "\n\n"
+                        if agent_loop < MAX_AGENT_LOOPS else ""
+                    )
 
                     continuation_prompt = (
                         cont_hint + _build_continuation(found_pairs)
@@ -833,25 +741,21 @@ async def chat(
                     yield "event: web_start\n"
                     yield f"data: {json.dumps({'query': web_query})}\n\n"
 
-                    if prompt_language == "ru":
-                        continuation_prompt = (
-                            f"Найди в интернете актуальную информацию по запросу: {web_query}\n"
-                            "Используй найденное в ответе естественно и коротко. Если данные противоречат друг другу, выбери наиболее вероятные и скажи мягко."
-                        )
-                    else:
-                        continuation_prompt = (
-                            f"Look up current information on the web for: {web_query}\n"
-                            "Use what you find naturally in the reply and keep it concise. If sources conflict, use the most likely information and mention it gently."
-                        )
+                    continuation_prompt = get_prompt(
+                        _CHAT_PROMPTS,
+                        lang=prompt_language,
+                        section="web_continuation",
+                        web_query=web_query,
+                    )
                     continuation_web_search = True
                     logger.info("[chat] continuation #%d mode=web query=%s", agent_loop, _preview(web_query, 120))
 
                 if is_last_initial and trailing_text:
-                    hint_prefix = (
-                        "\n\nТы уже начал(а) отвечать так (продолжай с этого места, не повторяй):\n"
-                        if prompt_language == "ru" else
-                        "\n\nYou already started replying like this (continue from here, don't repeat):\n"
-                    )
+                    hint_prefix = "\n\n" + get_prompt(
+                        _CHAT_PROMPTS,
+                        lang=prompt_language,
+                        section="trailing_hint",
+                    ) + "\n"
                     continuation_prompt += hint_prefix + trailing_text
 
                 continuation_messages = list(llm_messages)

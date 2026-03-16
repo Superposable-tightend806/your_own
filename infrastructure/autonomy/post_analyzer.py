@@ -57,14 +57,14 @@ def _format_history(
         u = (p.get("user_text") or "").strip()
         a = (p.get("assistant_text") or "").strip()
         if u:
-            lines.append(f"User: {u[:300]}")
+            lines.append(f"User: {u}")
         if a:
-            lines.append(f"Assistant: {a[:400]}")
+            lines.append(f"Assistant: {a}")
         lines.append("")
     if current_user_text.strip():
-        lines.append(f"User: {current_user_text[:300]}")
+        lines.append(f"User: {current_user_text}")
     if current_assistant_text.strip():
-        lines.append(f"Assistant: {current_assistant_text[:400]}")
+        lines.append(f"Assistant: {current_assistant_text}")
     return "\n".join(lines)
 
 
@@ -230,7 +230,7 @@ async def run_post_analysis(
             logger.info("[post_analyzer:%s] scheduled message at %s", account_id, ts_str)
 
             _pfx = "Запланировал сообщение на" if lang == "ru" else "Scheduled message for"
-            wb.append(account_id, f"{_pfx} {ts_str}: «{message[:100]}...»")
+            wb.append(account_id, f"{_pfx} {ts_str}: «{message}»")
         except ValueError:
             logger.warning("[post_analyzer] bad SCHEDULE_MESSAGE timestamp: %r", ts_str)
         except Exception as exc:

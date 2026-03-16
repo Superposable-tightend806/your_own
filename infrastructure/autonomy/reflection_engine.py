@@ -189,7 +189,7 @@ async def _search_dialogue(db: AsyncSession, account_id: str, arg: str) -> str:
             lines = []
             for p in pairs:
                 ts = p.created_at.strftime("%Y-%m-%d") if p.created_at else "?"
-                lines.append(f"[{ts}] {p.user_text[:120]} → {p.assistant_text[:200]}")
+                lines.append(f"[{ts}] {p.user_text} → {p.assistant_text}")
             return "\n".join(lines)
         except Exception as exc:
             logger.warning("[reflection] search_dialogue (semantic) error: %s", exc)
@@ -218,7 +218,7 @@ async def _search_dialogue(db: AsyncSession, account_id: str, arg: str) -> str:
         lines = []
         for p in pairs:
             lines.append(
-                f"User: {p.get('user_text','')[:150]}\nAssistant: {p.get('assistant_text','')[:250]}\n"
+                f"User: {p.get('user_text','')}\nAssistant: {p.get('assistant_text','')}\n"
             )
         return "\n---\n".join(lines)
     except Exception as exc:
@@ -304,7 +304,7 @@ async def _handle_command(
         await MessageRepository(db).bulk_save([row])
         _l = "ru" if re.search(r"[А-Яа-яЁё]", msg_text) else "en"
         _pfx = "Написал ей" if _l == "ru" else "Sent message"
-        wb.append(account_id, f"{_pfx}: «{msg_text[:100]}...»")
+        wb.append(account_id, f"{_pfx}: «{msg_text}»")
         return None
 
     elif cmd == "SCHEDULE_MESSAGE":
@@ -323,7 +323,7 @@ async def _handle_command(
                 logger.info("[reflection:%s] scheduled at %s", account_id, ts_str.strip())
                 _l = "ru" if re.search(r"[А-Яа-яЁё]", message) else "en"
                 _pfx = "Запланировал сообщение на" if _l == "ru" else "Scheduled message for"
-                wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{message.strip()[:100]}...»")
+                wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{message.strip()}»")
             except ValueError:
                 logger.warning("[reflection] bad SCHEDULE_MESSAGE ts: %r", ts_str)
         return None
@@ -436,7 +436,7 @@ async def run(account_id: str, api_key: str) -> None:
         try:
             recent_pairs = await repo.get_recent_canonical_pairs(account_id, limit_pairs=3)
             recent_dialogue = "\n\n".join(
-                f"User: {p.get('user_text','')[:200]}\nAssistant: {p.get('assistant_text','')[:300]}"
+                f"User: {p.get('user_text','')}\nAssistant: {p.get('assistant_text','')}"
                 for p in recent_pairs
             ) if recent_pairs else ""
         except Exception as exc:
