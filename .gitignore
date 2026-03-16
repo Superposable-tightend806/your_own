@@ -25,6 +25,7 @@ frontend/release/
 *.sqlite3
 *.db
 generated_images
+user_uploads
 
 # Server data (settings, auth token, soul, autonomy)
 data/
