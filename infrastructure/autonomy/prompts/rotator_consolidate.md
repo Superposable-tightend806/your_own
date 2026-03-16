@@ -8,17 +8,17 @@
 Раздел «{section}» в твоей глубинной памяти (identity.md) разросся.
 В нём сейчас {count} записей. Пора навести порядок.
 
-## Весь файл identity.md (для контекста):
+### Весь файл identity.md (для контекста):
 ---
 {full_identity}
 ---
 
-## Раздел «{section}» — записи, которые нужно консолидировать:
+### Раздел «{section}» — записи, которые нужно консолидировать:
 ---
 {section_content}
 ---
 
-## Заметки с рабочего стола (свежий контекст):
+### Заметки с рабочего стола (свежий контекст):
 {notes}
 
 Твоя задача — **консолидировать** раздел «{section}».
@@ -47,17 +47,17 @@ No section heading, no preamble, no explanations.
 Section "{section}" in your deep memory (identity.md) has grown too large.
 It currently has {count} entries. Time to bring order.
 
-## Full identity.md (for context):
+### Full identity.md (for context):
 ---
 {full_identity}
 ---
 
-## Section "{section}" — entries to consolidate:
+### Section "{section}" — entries to consolidate:
 ---
 {section_content}
 ---
 
-## Workbench notes (fresh context):
+### Workbench notes (fresh context):
 {notes}
 
 Your task is to **consolidate** section "{section}".

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from infrastructure.autonomy import identity_memory as identity
 from infrastructure.autonomy import workbench as wb
 from infrastructure.llm.prompt_loader import get_prompt
+from infrastructure.settings_store import now_local
 
 from infrastructure.logging.logger import setup_logger
 
@@ -166,7 +167,7 @@ async def run_post_analysis(
     Fires in the background after the chat stream ends — zero latency for the user.
     """
     ai_name = _get_ai_name()
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_str = now_local().strftime("%Y-%m-%d %H:%M")
 
     message_history = _format_history(recent_pairs, current_user_text, current_assistant_text)
     lang = _detect_lang(message_history)
@@ -214,8 +215,9 @@ async def run_post_analysis(
             from infrastructure.autonomy.task_queue import create_task, cancel_duplicate_scheduled
             from infrastructure.database.models.autonomy_task import TriggerType
 
-            scheduled_at = datetime.strptime(ts_str, "%Y-%m-%d %H:%M").replace(
-                tzinfo=timezone.utc,
+            from infrastructure.settings_store import local_to_utc
+            scheduled_at = local_to_utc(
+                datetime.strptime(ts_str, "%Y-%m-%d %H:%M")
             )
             async with get_db_session() as db:
                 await cancel_duplicate_scheduled(db, account_id, scheduled_at, "postanalysis")

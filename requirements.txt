@@ -5,6 +5,7 @@ python-multipart>=0.0.9
 sse-starlette>=2.1.0
 
 # Settings & config
+tzdata>=2024.1
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
 python-dotenv>=1.0.0

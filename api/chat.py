@@ -45,6 +45,7 @@ from infrastructure.memory.chroma_pipeline import get_chroma_pipeline
 from infrastructure.auth import require_auth
 from infrastructure.autonomy import workbench as wb
 from infrastructure.llm.prompt_loader import get_prompt
+from infrastructure.settings_store import now_local, local_to_utc
 from settings import settings
 
 _CHAT_PROMPTS = "infrastructure/api/prompts/chat_skills.md"
@@ -337,7 +338,7 @@ async def chat(
             logger.warning("[chat] Chroma retrieval failed: %s", exc)
 
     # Current time for SCHEDULE_MESSAGE and general awareness
-    _now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    _now_str = now_local().strftime("%Y-%m-%d %H:%M")
 
     # Recent workbench entries for context
     _recent_wb = _get_recent_workbench(account_id or "default")
@@ -840,8 +841,7 @@ async def chat(
                             continue
                         try:
                             local_dt = datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M")
-                            from datetime import timezone as _tz
-                            scheduled_at = local_dt.astimezone(_tz.utc)
+                            scheduled_at = local_to_utc(local_dt)
                             await cancel_duplicate_scheduled(db, account_id or "default", scheduled_at, "chat")
                             payload = json.dumps({"message": sched_msg, "source": "chat"})
                             await create_task(

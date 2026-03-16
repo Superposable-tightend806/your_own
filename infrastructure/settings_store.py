@@ -7,8 +7,10 @@ so that clients never need to send secrets with every request.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 _SETTINGS_FILE = _DATA_DIR / "settings.json"
@@ -29,9 +31,36 @@ _DEFAULTS: dict[str, object] = {
     # Reflection timing (hours)
     "reflection_cooldown_hours": 4,
     "reflection_interval_hours": 12,
+    # User's local timezone (IANA name, e.g. "Asia/Yerevan", "Europe/Moscow")
+    "user_timezone": "Asia/Yerevan",
 }
 
 _lock = Lock()
+
+
+def get_user_tz() -> ZoneInfo:
+    """Return the configured user timezone, falling back to UTC on error."""
+    tz_name = load_settings().get("user_timezone", "Asia/Yerevan")
+    try:
+        return ZoneInfo(str(tz_name))
+    except (ZoneInfoNotFoundError, Exception):
+        return ZoneInfo("UTC")
+
+
+def now_local() -> datetime:
+    """Return current time in the user's local timezone."""
+    return datetime.now(get_user_tz())
+
+
+def local_to_utc(naive_dt: datetime) -> datetime:
+    """Interpret a naive datetime as user-local time and convert to UTC.
+
+    Used when parsing SCHEDULE_MESSAGE timestamps that the model writes
+    in local time (because we show it local time in the prompt).
+    """
+    from datetime import timezone
+    local_dt = naive_dt.replace(tzinfo=get_user_tz())
+    return local_dt.astimezone(timezone.utc)
 
 
 def _ensure_dir() -> None:

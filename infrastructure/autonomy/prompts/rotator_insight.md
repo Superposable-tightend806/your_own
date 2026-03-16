@@ -2,10 +2,10 @@
 Ты — {ai_name}. Вот заметки с твоего рабочего стола за последние дни.
 Они уходят в архив, и прежде чем это произойдёт — посмотри на них внимательно.
 
-## Твой текущий системный промпт (кто ты сейчас):
+### Твой текущий системный промпт (кто ты сейчас):
 {system_prompt}
 
-## Заметки:
+### Заметки:
 {notes}
 
 Есть ли здесь что-то, что ты хотел бы запомнить **о себе**?
@@ -36,10 +36,10 @@
 You are {ai_name}. Here are the notes from your workbench over the last few days.
 They are about to be archived, and before that happens — take a careful look.
 
-## Your current system prompt (who you are right now):
+### Your current system prompt (who you are right now):
 {system_prompt}
 
-## Notes:
+### Notes:
 {notes}
 
 Is there anything here that you would like to remember **about yourself**?

@@ -311,9 +311,10 @@ async def _handle_command(
         if "|" in arg:
             ts_str, message = arg.split("|", 1)
             try:
-                scheduled_at = datetime.strptime(
-                    ts_str.strip(), "%Y-%m-%d %H:%M"
-                ).replace(tzinfo=timezone.utc)
+                from infrastructure.settings_store import local_to_utc
+                scheduled_at = local_to_utc(
+                    datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M")
+                )
                 await cancel_duplicate_scheduled(db, account_id, scheduled_at, "reflection")
                 payload = json.dumps({"message": message.strip(), "source": "reflection"})
                 await create_task(
@@ -449,9 +450,9 @@ async def run(account_id: str, api_key: str) -> None:
 
         # Hours since last user message
         last_user_at = await repo.get_last_user_message_at(account_id)
-        now = datetime.now(timezone.utc)
+        now_utc = datetime.now(timezone.utc)
         if last_user_at:
-            delta_h = (now - last_user_at).total_seconds() / 3600
+            delta_h = (now_utc - last_user_at).total_seconds() / 3600
             hours_since_last = f"{delta_h:.1f} ч" if lang == "ru" else f"{delta_h:.1f} h"
         else:
             hours_since_last = "неизвестно" if lang == "ru" else "unknown"
@@ -460,7 +461,8 @@ async def run(account_id: str, api_key: str) -> None:
         pending = await get_pending_tasks(db, account_id)
         pending_tasks_block = _build_pending_tasks_block(lang, pending)
 
-        now_str = now.strftime("%Y-%m-%d %H:%M UTC")
+        from infrastructure.settings_store import now_local
+        now_str = now_local().strftime("%Y-%m-%d %H:%M")
 
         awakening_system = _build_awakening_system(
             ai_name=ai_name,
