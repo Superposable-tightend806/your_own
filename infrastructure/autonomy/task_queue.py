@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 
+from datetime import timedelta
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,6 +54,69 @@ async def get_pending_tasks(db: AsyncSession, account_id: str) -> list[AutonomyT
         ).order_by(AutonomyTask.scheduled_at.asc().nullslast())
     )
     return list(result.scalars().all())
+
+
+async def get_recent_tasks(
+    db: AsyncSession,
+    account_id: str,
+    hours: int = 12,
+) -> list[AutonomyTask]:
+    """Return PENDING and DONE TIME tasks scheduled within the last N hours."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    result = await db.execute(
+        select(AutonomyTask).where(
+            AutonomyTask.account_id == account_id,
+            AutonomyTask.trigger_type == TriggerType.TIME,
+            AutonomyTask.scheduled_at >= cutoff,
+            AutonomyTask.status.in_([TaskStatus.PENDING, TaskStatus.DONE]),
+        ).order_by(AutonomyTask.scheduled_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def cancel_task_by_time(
+    db: AsyncSession,
+    account_id: str,
+    scheduled_at_utc: datetime,
+) -> bool:
+    """Cancel a PENDING task at the given UTC time. Returns True if found."""
+    result = await db.execute(
+        select(AutonomyTask).where(
+            AutonomyTask.account_id == account_id,
+            AutonomyTask.trigger_type == TriggerType.TIME,
+            AutonomyTask.status == TaskStatus.PENDING,
+            AutonomyTask.scheduled_at == scheduled_at_utc,
+        )
+    )
+    tasks = list(result.scalars().all())
+    for t in tasks:
+        t.status = TaskStatus.CANCELLED
+    if tasks:
+        await db.commit()
+    return bool(tasks)
+
+
+async def reschedule_task(
+    db: AsyncSession,
+    account_id: str,
+    old_scheduled_at_utc: datetime,
+    new_scheduled_at_utc: datetime,
+) -> bool:
+    """Move a PENDING task to a new time. Returns True if found."""
+    result = await db.execute(
+        select(AutonomyTask).where(
+            AutonomyTask.account_id == account_id,
+            AutonomyTask.trigger_type == TriggerType.TIME,
+            AutonomyTask.status == TaskStatus.PENDING,
+            AutonomyTask.scheduled_at == old_scheduled_at_utc,
+        )
+    )
+    tasks = list(result.scalars().all())
+    for t in tasks:
+        t.scheduled_at = new_scheduled_at_utc
+    if tasks:
+        await db.commit()
+    return bool(tasks)
 
 
 async def get_due_tasks(db: AsyncSession, account_id: str) -> list[AutonomyTask]:

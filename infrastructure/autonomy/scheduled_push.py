@@ -231,8 +231,14 @@ async def run_due(account_id: str) -> None:
                 task.id, source, action, final_message[:80],
             )
 
+            from infrastructure.autonomy import workbench as wb
+            _lang = _detect_lang(message)
+            _orig_preview = message[:60] + ("…" if len(message) > 60 else "")
+
             if action == "cancel":
                 logger.info("[scheduled_push] message cancelled by LLM for task_id=%s", task.id)
+                _pfx = "Подумал и решил отменить сообщение перед отправкой" if _lang == "ru" else "Reconsidered and cancelled message before sending"
+                wb.append(account_id, f"{_pfx}: «{_orig_preview}»")
                 continue
 
             # Phase 3: send via Pushy
@@ -246,3 +252,12 @@ async def run_due(account_id: str) -> None:
 
             # Phase 4: persist in chat history
             await _save_push_to_db(db, account_id, final_message)
+
+            # Phase 5: log to workbench
+            _final_preview = final_message[:60] + ("…" if len(final_message) > 60 else "")
+            if action == "rewrite":
+                _pfx = "Подумал и решил переписать сообщение перед отправкой" if _lang == "ru" else "Reconsidered and rewrote message before sending"
+                wb.append(account_id, f"{_pfx}: «{_orig_preview}» → «{_final_preview}»")
+            else:
+                _pfx = "Отправил сообщение" if _lang == "ru" else "Sent message"
+                wb.append(account_id, f"{_pfx}: «{_final_preview}»")

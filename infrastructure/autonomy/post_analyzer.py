@@ -233,7 +233,8 @@ async def run_post_analysis(
             logger.info("[post_analyzer:%s] scheduled message at %s", account_id, ts_str)
 
             _pfx = "Запланировал сообщение на" if lang == "ru" else "Scheduled message for"
-            wb.append(account_id, f"{_pfx} {ts_str}: «{message}»")
+            _preview = message[:60] + ("…" if len(message) > 60 else "")
+            wb.append(account_id, f"{_pfx} {ts_str}: «{_preview}»")
         except ValueError:
             logger.warning("[post_analyzer] bad SCHEDULE_MESSAGE timestamp: %r", ts_str)
         except Exception as exc:

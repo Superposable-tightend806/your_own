@@ -77,6 +77,7 @@ MAX_EXTEND_ASKS = 3
 _CMD_RE = re.compile(
     r"\[(?P<cmd>SEARCH_MEMORIES|SEARCH_NOTES|SEARCH_DIALOGUE|WEB_SEARCH"
     r"|WRITE_NOTE|WRITE_IDENTITY|SEND_MESSAGE|SCHEDULE_MESSAGE"
+    r"|CANCEL_MESSAGE|RESCHEDULE_MESSAGE"
     r"|EXTEND|SLEEP|RECALL|WRITE|HISTORY):\s*(?P<arg>.*?)\]",
     re.IGNORECASE | re.DOTALL,
 )
@@ -304,7 +305,8 @@ async def _handle_command(
         await MessageRepository(db).bulk_save([row])
         _l = "ru" if re.search(r"[А-Яа-яЁё]", msg_text) else "en"
         _pfx = "Написал ей" if _l == "ru" else "Sent message"
-        wb.append(account_id, f"{_pfx}: «{msg_text}»")
+        _preview = msg_text[:60] + ("…" if len(msg_text) > 60 else "")
+        wb.append(account_id, f"{_pfx}: «{_preview}»")
         return None
 
     elif cmd == "SCHEDULE_MESSAGE":
@@ -324,9 +326,57 @@ async def _handle_command(
                 logger.info("[reflection:%s] scheduled at %s", account_id, ts_str.strip())
                 _l = "ru" if re.search(r"[А-Яа-яЁё]", message) else "en"
                 _pfx = "Запланировал сообщение на" if _l == "ru" else "Scheduled message for"
-                wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{message.strip()}»")
+                _preview = message.strip()[:60] + ("…" if len(message.strip()) > 60 else "")
+                wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{_preview}»")
             except ValueError:
                 logger.warning("[reflection] bad SCHEDULE_MESSAGE ts: %r", ts_str)
+        return None
+
+    elif cmd == "CANCEL_MESSAGE":
+        ts_str = arg.strip()
+        try:
+            from infrastructure.settings_store import local_to_utc
+            from infrastructure.autonomy.task_queue import cancel_task_by_time
+            scheduled_at = local_to_utc(
+                datetime.strptime(ts_str, "%Y-%m-%d %H:%M")
+            )
+            found = await cancel_task_by_time(db, account_id, scheduled_at)
+            logger.info("[reflection:%s] CANCEL_MESSAGE %s found=%s", account_id, ts_str, found)
+            _l = "ru" if re.search(r"[А-Яа-яЁё]", ts_str) else "ru"
+            if found:
+                wb.append(account_id, f"Отменил сообщение на {ts_str}")
+            else:
+                return f"Сообщение на {ts_str} не найдено (уже отправлено или не существует)."
+        except ValueError:
+            logger.warning("[reflection] bad CANCEL_MESSAGE ts: %r", ts_str)
+        return None
+
+    elif cmd == "RESCHEDULE_MESSAGE":
+        if "->" in arg:
+            old_ts_str, new_ts_str = arg.split("->", 1)
+            try:
+                from infrastructure.settings_store import local_to_utc
+                from infrastructure.autonomy.task_queue import reschedule_task
+                old_utc = local_to_utc(
+                    datetime.strptime(old_ts_str.strip(), "%Y-%m-%d %H:%M")
+                )
+                new_utc = local_to_utc(
+                    datetime.strptime(new_ts_str.strip(), "%Y-%m-%d %H:%M")
+                )
+                found = await reschedule_task(db, account_id, old_utc, new_utc)
+                logger.info(
+                    "[reflection:%s] RESCHEDULE_MESSAGE %s -> %s found=%s",
+                    account_id, old_ts_str.strip(), new_ts_str.strip(), found,
+                )
+                if found:
+                    wb.append(
+                        account_id,
+                        f"Перенёс сообщение с {old_ts_str.strip()} на {new_ts_str.strip()}",
+                    )
+                else:
+                    return f"Сообщение на {old_ts_str.strip()} не найдено (уже отправлено или не существует)."
+            except ValueError:
+                logger.warning("[reflection] bad RESCHEDULE_MESSAGE: %r", arg)
         return None
 
     return None
@@ -399,6 +449,10 @@ def _build_extend_offer(lang: str, step: int, max_steps: int, max_extend: int) -
 def _build_pending_tasks_block(lang: str, tasks: list) -> str:
     if not tasks:
         return ""
+    from infrastructure.settings_store import get_user_tz
+    from infrastructure.database.models.autonomy_task import TaskStatus
+    now_utc = datetime.now(timezone.utc)
+    user_tz = get_user_tz()
     lines = []
     for t in tasks:
         try:
@@ -406,16 +460,33 @@ def _build_pending_tasks_block(lang: str, tasks: list) -> str:
             msg = pd.get("message", str(t.payload))
         except (json.JSONDecodeError, TypeError):
             msg = str(t.payload)
-        ts = t.scheduled_at.strftime("%Y-%m-%d %H:%M") if t.scheduled_at else "—"
-        lines.append(f"- [{ts}] {msg}")
+        if t.scheduled_at:
+            ts_local = t.scheduled_at.astimezone(user_tz).strftime("%Y-%m-%d %H:%M")
+        else:
+            ts_local = "—"
+        if t.status == TaskStatus.DONE:
+            status_label = "✓ отправлено" if lang == "ru" else "✓ sent"
+        elif t.scheduled_at and t.scheduled_at <= now_utc:
+            status_label = "⏳ отправляется" if lang == "ru" else "⏳ sending"
+        else:
+            status_label = "⏰ ожидает" if lang == "ru" else "⏰ pending"
+        lines.append(f"- [{ts_local}] [{status_label}] {msg}")
     tasks_list = "\n".join(lines)
     if lang == "ru":
-        header = "## Твои незавершённые задачи:"
-        footer = "Ты сможешь переписать эти сообщения или отменить их в момент отправки — тогда ты увидишь весь свой журнал и само сообщение. Не переживай о них сейчас.\n"
+        header = "### Твои запланированные сообщения:"
+        footer = (
+            "Ты можешь отменить или перенести любое ожидающее сообщение прямо сейчас:\n"
+            "[CANCEL_MESSAGE: YYYY-MM-DD HH:MM] — отменить сообщение на это время\n"
+            "[RESCHEDULE_MESSAGE: YYYY-MM-DD HH:MM -> YYYY-MM-DD HH:MM] — перенести на другое время"
+        )
     else:
-        header = "## Your pending tasks:"
-        footer = "You will be able to rewrite or cancel these messages at the moment of sending — you will see your full journal and the message itself. Don't worry about them now.\n"
-    return f"{header}\n{tasks_list}\n{footer}\n"
+        header = "### Your scheduled messages:"
+        footer = (
+            "You can cancel or reschedule any pending message right now:\n"
+            "[CANCEL_MESSAGE: YYYY-MM-DD HH:MM] — cancel the message at this time\n"
+            "[RESCHEDULE_MESSAGE: YYYY-MM-DD HH:MM -> YYYY-MM-DD HH:MM] — move to a different time"
+        )
+    return f"{header}\n{tasks_list}\n{footer}\n\n"
 
 
 # ── Main run loop ─────────────────────────────────────────────────────────────
@@ -462,9 +533,10 @@ async def run(account_id: str, api_key: str) -> None:
         else:
             hours_since_last = "неизвестно" if lang == "ru" else "unknown"
 
-        # Pending tasks
-        pending = await get_pending_tasks(db, account_id)
-        pending_tasks_block = _build_pending_tasks_block(lang, pending)
+        # All tasks from last 24h (with status labels so AI sees what's sent/pending)
+        from infrastructure.autonomy.task_queue import get_recent_tasks
+        recent_tasks = await get_recent_tasks(db, account_id, hours=24)
+        pending_tasks_block = _build_pending_tasks_block(lang, recent_tasks)
 
         from infrastructure.settings_store import now_local
         now_str = now_local().strftime("%Y-%m-%d %H:%M")
