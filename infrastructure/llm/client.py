@@ -9,6 +9,7 @@ Supports:
 - Image generation via modalities: ["image", "text"] (non-streaming call)
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -172,6 +173,51 @@ class LLMClient:
                     chunk = delta.get("content")
                     if chunk:
                         yield chunk
+
+    async def complete(
+        self,
+        messages: list[dict],
+        max_tokens: int = 600,
+        temperature: float | None = None,
+    ) -> str:
+        """Non-streaming single completion. Returns assistant text or '' on failure."""
+        model = self.model
+        temp = temperature if temperature is not None else self.temperature
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temp,
+            "top_p": self.top_p,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        timeout = aiohttp.ClientTimeout(total=60)
+        for attempt in range(1, 4):
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(
+                        f"{OPENROUTER_BASE}/chat/completions",
+                        headers=self._headers(),
+                        json=payload,
+                    ) as resp:
+                        if resp.status != 200:
+                            body = await resp.text()
+                            logger.warning(
+                                "[LLMClient.complete] %d on attempt %d/3: %s",
+                                resp.status, attempt, body[:200],
+                            )
+                        else:
+                            data = await resp.json()
+                            choices = data.get("choices") or []
+                            if choices:
+                                return choices[0].get("message", {}).get("content", "").strip()
+            except Exception as exc:
+                logger.warning("[LLMClient.complete] error on attempt %d/3: %s", attempt, exc)
+
+            if attempt < 3:
+                await asyncio.sleep(1.5 * attempt)
+
+        return ""
 
     async def generate_image(self, prompt: str, model: str) -> str | None:
         """

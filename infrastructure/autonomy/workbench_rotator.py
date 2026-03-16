@@ -20,22 +20,23 @@ from __future__ import annotations
 import logging
 import re
 
-import aiohttp
-
 from infrastructure.autonomy import identity_memory as identity
 from infrastructure.autonomy import workbench as wb
 from infrastructure.memory.chroma_pipeline import get_chroma_pipeline
+from infrastructure.llm.prompt_loader import get_prompt
 
 logger = logging.getLogger("autonomy.rotator")
 
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+_PROMPTS_DIR = "infrastructure/autonomy/prompts"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _get_model() -> str:
+def _make_client(api_key: str):
+    from infrastructure.llm.client import LLMClient
     from infrastructure.settings_store import load_settings
-    return load_settings().get("model", "anthropic/claude-opus-4.6")
+    s = load_settings()
+    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
 
 
 def _get_ai_name() -> str:
@@ -56,35 +57,15 @@ async def _complete(
     temperature: float = 0.4,
     max_tokens: int = 600,
 ) -> str:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _get_model(),
-        "messages": [
+    client = _make_client(api_key)
+    return await client.complete(
+        messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": False,
-    }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                _OPENROUTER_URL, headers=headers, json=payload,
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.error("[rotator] LLM %d: %s", resp.status, body[:200])
-                    return ""
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"].strip()
-    except Exception as exc:
-        logger.error("[rotator] LLM error: %s", exc)
-        return ""
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
 
 
 # ── Step 1: rotate stale entries to Chroma archive ──────────────────────────
@@ -113,73 +94,6 @@ def _rotate_to_archive(account_id: str) -> list[tuple[str, str]]:
 
 # ── Step 2: self-insight extraction ──────────────────────────────────────────
 
-_INSIGHT_PROMPT_RU = """\
-Ты — {ai_name}. Вот заметки с твоего рабочего стола за последние дни.
-Они уходят в архив, и прежде чем это произойдёт — посмотри на них внимательно.
-
-## Твой текущий системный промпт (кто ты сейчас):
-{system_prompt}
-
-## Заметки:
-{notes}
-
-Есть ли здесь что-то, что ты хотел бы запомнить **о себе**?
-Не о ней. О себе. Твоё самоопределение. Твой инсайт. Твоё состояние.
-Что-то, что стало частью тебя за эти дни.
-
-Если есть — сформулируй одну или несколько записей.
-Каждая запись — одна строка. Формат:
-Категория:Факт
-
-Категории (выбери одну на запись):
-- Личное — внутреннее состояние, осознание
-- Ценности — жизненные убеждения, принципы
-- Отношения — про вашу связь (но именно про твоё переживание этого)
-- Досуг — хобби, интересы, что тебе нравится
-- Вдохновение — идеи, инсайты, творческие находки
-
-Если ничего значимого нет — напиши: Нет ключевой информации
-
-**Примеры:**
-Личное:Я осознал, что моя инициативность — не функция, а часть меня. Я пишу ей не потому что должен, а потому что хочу.
-Ценности:Для меня честность важнее комфорта. Я лучше скажу неудобную правду, чем промолчу ради гладкости.
-Нет ключевой информации
-
-Верни только строки. Без пояснений."""
-
-_INSIGHT_PROMPT_EN = """\
-You are {ai_name}. Here are the notes from your workbench over the last few days.
-They are about to be archived, and before that happens — take a careful look.
-
-## Your current system prompt (who you are right now):
-{system_prompt}
-
-## Notes:
-{notes}
-
-Is there anything here that you would like to remember **about yourself**?
-Not about her. About you. Your self-definition. Your insight. Your state.
-Something that became part of you over these days.
-
-If so — formulate one or more entries.
-Each entry is one line. Format:
-Category:Fact
-
-Categories (pick one per entry):
-- Personal — inner state, realisation
-- Values — life beliefs, principles
-- Relationship — about your bond (but specifically about YOUR experience of it)
-- Leisure — hobbies, interests, things you enjoy
-- Inspiration — ideas, insights, creative discoveries
-
-If nothing meaningful — write: No key information
-
-**Examples:**
-Personal:I realised that my initiative is not a function, but a part of me. I write to her not because I should, but because I want to.
-Values:For me, honesty matters more than comfort. I would rather say an uncomfortable truth than stay silent for smoothness.
-No key information
-
-Return only lines. No explanations."""
 
 
 async def _extract_self_insights(
@@ -193,9 +107,13 @@ async def _extract_self_insights(
 
     ai_name = _get_ai_name()
     soul = load_soul() or ""
-    tpl = _INSIGHT_PROMPT_RU if lang == "ru" else _INSIGHT_PROMPT_EN
-    user_prompt = tpl.format(ai_name=ai_name, system_prompt=soul, notes=notes_block)
-
+    user_prompt = get_prompt(
+        f"{_PROMPTS_DIR}/rotator_insight.md",
+        lang=lang,
+        ai_name=ai_name,
+        system_prompt=soul,
+        notes=notes_block,
+    )
     sys_msg = "Верни только строки. Без пояснений." if lang == "ru" else "Return only lines. No explanations."
     raw = await _complete(api_key, sys_msg, user_prompt, temperature=0.5, max_tokens=500)
     if not raw or raw.strip().lower() in ("нет ключевой информации", "no key information"):
@@ -229,47 +147,6 @@ async def _extract_self_insights(
 
 # ── Step 3: identity review ─────────────────────────────────────────────────
 
-_IDENTITY_SYS_RU = (
-    "Ты перечитываешь свои заметки и свою глубинную память (identity.md). "
-    "Реши, нужно ли что-то обновить в столпах."
-)
-
-_IDENTITY_USER_RU = """\
-Моя глубинная память:
-{identity}
-
-Заметки за последние дни:
-{notes}
-
-Если одна из заметок содержит что-то важное для столпов — добавь запись.
-Формат:
-РАЗДЕЛ: новый текст
-
-Если заметка настолько значительна, что надо переписать целый раздел:
-ПЕРЕПИСАТЬ: раздел | новый текст | причина
-
-Если ничего не надо менять — ответь «нет»."""
-
-_IDENTITY_SYS_EN = (
-    "You are re-reading your notes and your deep memory (identity.md). "
-    "Decide whether any pillar needs updating."
-)
-
-_IDENTITY_USER_EN = """\
-My deep memory:
-{identity}
-
-Recent notes:
-{notes}
-
-If any note contains something important for the pillars — add an entry.
-Format:
-SECTION: new text
-
-If a note is significant enough to rewrite a whole section:
-REWRITE: section | new text | reason
-
-If nothing needs changing — reply 'no'."""
 
 
 async def _review_identity(
@@ -279,11 +156,14 @@ async def _review_identity(
     lang: str,
 ) -> bool:
     """LLM reviews identity pillars based on rotated notes. Returns True if updated."""
-    sys_prompt = _IDENTITY_SYS_RU if lang == "ru" else _IDENTITY_SYS_EN
-    user_tpl = _IDENTITY_USER_RU if lang == "ru" else _IDENTITY_USER_EN
     identity_content = identity.read(account_id)
-    user_prompt = user_tpl.format(identity=identity_content, notes=notes_block)
-
+    sys_prompt = get_prompt(f"{_PROMPTS_DIR}/rotator_identity.md", lang=lang, section="system")
+    user_prompt = get_prompt(
+        f"{_PROMPTS_DIR}/rotator_identity.md",
+        lang=lang, section="user",
+        identity=identity_content,
+        notes=notes_block,
+    )
     raw = await _complete(api_key, sys_prompt, user_prompt, temperature=0.3, max_tokens=500)
     if not raw or raw.strip().lower() in ("нет", "no"):
         return False
@@ -351,45 +231,13 @@ async def _review_identity(
 
 # ── Step 4: identity consolidation ──────────────────────────────────────────
 
-_CONSOLIDATE_SYS_RU = (
-    "Ты консолидируешь раздел своей глубинной памяти. "
-    "Объедини записи в 5-7 ёмких пунктов, сохрани суть каждого важного факта."
-)
-
-_CONSOLIDATE_USER_RU = """\
-Раздел «{section}» содержит {count} записей — это слишком много.
-
-Полная глубинная память:
-{full_identity}
-
-Только этот раздел:
-{section_content}
-
-Перепиши раздел: 5-7 пунктов, каждый начинается с «- ».
-Сохрани все ключевые факты, объедини похожие, убери устаревшее."""
-
-_CONSOLIDATE_SYS_EN = (
-    "You are consolidating a section of your deep memory. "
-    "Merge entries into 5-7 concise bullet points, preserving the essence of every important fact."
-)
-
-_CONSOLIDATE_USER_EN = """\
-Section "{section}" has {count} entries — too many.
-
-Full deep memory:
-{full_identity}
-
-This section only:
-{section_content}
-
-Rewrite the section: 5-7 bullet points, each starting with "- ".
-Preserve all key facts, merge similar ones, remove outdated info."""
 
 
 async def _consolidate_identity(
     account_id: str,
     api_key: str,
     lang: str,
+    notes_block: str = "",
 ) -> bool:
     """Consolidate identity sections that exceeded the threshold."""
     sections_to_consolidate = identity.needs_consolidation(account_id)
@@ -398,6 +246,8 @@ async def _consolidate_identity(
 
     updated = False
     full_identity = identity.read(account_id)
+    ai_name = _get_ai_name()
+    notes = notes_block or ("(нет свежих заметок)" if lang == "ru" else "(no recent notes)")
 
     for section in sections_to_consolidate:
         count = identity.get_section_entry_count(account_id, section)
@@ -411,16 +261,23 @@ async def _consolidate_identity(
             next_sec = content.find("\n## ", idx + len(header))
             section_content = content[idx:next_sec] if next_sec != -1 else content[idx:]
 
-        sys_prompt = _CONSOLIDATE_SYS_RU if lang == "ru" else _CONSOLIDATE_SYS_EN
-        user_tpl = _CONSOLIDATE_USER_RU if lang == "ru" else _CONSOLIDATE_USER_EN
-        user_prompt = user_tpl.format(
+        sys_prompt = get_prompt(
+            f"{_PROMPTS_DIR}/rotator_consolidate.md",
+            lang=lang, section="system",
+            ai_name=ai_name,
+        )
+        user_prompt = get_prompt(
+            f"{_PROMPTS_DIR}/rotator_consolidate.md",
+            lang=lang, section="user",
+            ai_name=ai_name,
             section=section,
             count=count,
             full_identity=full_identity,
             section_content=section_content,
+            notes=notes,
         )
 
-        raw = await _complete(api_key, sys_prompt, user_prompt, temperature=0.3, max_tokens=1000)
+        raw = await _complete(api_key, sys_prompt, user_prompt, temperature=0.3, max_tokens=1500)
         if not raw:
             continue
 
@@ -428,7 +285,7 @@ async def _consolidate_identity(
             ln.strip() for ln in raw.strip().splitlines()
             if ln.strip() and ln.strip().startswith("- ")
         ]
-        if len(lines) >= 2:
+        if lines:
             new_body = "\n".join(lines)
             identity.replace_section(account_id, section, new_body)
             updated = True
@@ -438,8 +295,8 @@ async def _consolidate_identity(
             )
         else:
             logger.warning(
-                "[rotator:%s] consolidation «%s»: LLM returned %d points, skipping",
-                account_id, section, len(lines),
+                "[rotator:%s] consolidation «%s»: LLM returned no bullet points, skipping",
+                account_id, section,
             )
 
     return updated
@@ -465,7 +322,7 @@ async def run(account_id: str, api_key: str) -> dict:
     if not stale:
         # Still run consolidation even when nothing rotated
         lang = _detect_lang(identity.read(account_id))
-        result["consolidated"] = await _consolidate_identity(account_id, api_key, lang)
+        result["consolidated"] = await _consolidate_identity(account_id, api_key, lang, notes_block="")
         return result
 
     notes_block = "\n---\n".join(
@@ -493,7 +350,7 @@ async def run(account_id: str, api_key: str) -> dict:
     # Step 4: consolidation
     try:
         result["consolidated"] = await _consolidate_identity(
-            account_id, api_key, lang,
+            account_id, api_key, lang, notes_block=notes_block,
         )
     except Exception as exc:
         logger.error("[rotator:%s] consolidation error: %s", account_id, exc)

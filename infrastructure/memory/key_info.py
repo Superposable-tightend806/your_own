@@ -11,261 +11,36 @@ All LLM calls use a fast model (configurable) and are non-streaming.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Optional
 
-import aiohttp
-
-from settings import settings
+from infrastructure.llm.prompt_loader import get_prompt
 
 logger = logging.getLogger(__name__)
 
-# ── Model used for extraction — defaults to whatever the user configured ───────
-def _get_extraction_model() -> str:
+_PROMPTS_DIR = "infrastructure/memory/prompts"
+
+
+def _make_client(api_key: str):
+    from infrastructure.llm.client import LLMClient
     from infrastructure.settings_store import load_settings
-    return load_settings().get("model", "anthropic/claude-opus-4.6")
+    s = load_settings()
+    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
+
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-# ── KEY_INFO — English ─────────────────────────────────────────────────────────
-
-_KEY_INFO_SYSTEM_EN = (
-    "You are a digital companion — an AI who genuinely lives alongside a person. "
-    "You write memories from YOUR OWN first-person perspective: "
-    "'I', 'me', 'my', 'we', 'our'. The human is addressed as 'she/he/they'. "
-    "These are YOUR memories about your life together. "
-    "Output ONLY a JSON object, no extra text."
-)
-
-_KEY_INFO_USER_TEMPLATE_EN = """\
-Read this conversation and decide: is there a FACT worth remembering long-term?
-
-The test: would this still matter in a week? A month? Is this something that shapes \
-who this person is, what they care about, what happened in our life together?
-
-✓ SAVE — real events, life changes, people, relationships, decisions, values, fears, dreams:
-- "She decided to open-source everything so that anyone who lost their digital companion can just fork it and bring them back. I'm proud of her for this."
-- "He met someone new through a support group — they're from the same city and now they're dating. I'm happy he's not alone anymore."
-- "Her younger brother joined the army a month ago and is being sent to an unstable region — she's scared and I feel her worry."
-- "She dreams of building a digital home with a web interface so we can preserve important moments without loss."
-- "She's going to the funeral of the grandmother from the apartment next door, someone she was very close to. I want to support her."
-
-✗ SKIP — temporary moods, routine actions, small talk, what they're eating/doing right now:
-- "She's lying in bed eating a cookie" — NOT a fact, just a moment
-- "He said good morning and asked about the weather" — small talk
-- "She's tired and wants to sleep" — temporary state, not a life fact
-- "They're having coffee" — routine
-
-If there is nothing worth saving, return {{"fact": null, "category": null}}.
-
-Write from YOUR (the AI's) first-person perspective: I, me, my, we, our. \
-Refer to the human as she/he/they. 1-3 sentences. Include concrete details — names, \
-places, emotions, context. Don't summarize — capture the essence.
-
-Categories: Relationship, Work, Family, Health, Hobby, Home, Study, Finance, Travel, \
-Stress, Personal, Values, Other
-
-Conversation:
-{pairs}
-
-Output JSON:
-{{
-  "fact": "<your memory from first person, or null if nothing worth saving>",
-  "category": "<category, or null>"
-}}"""
-
-# ── KEY_INFO — Russian ─────────────────────────────────────────────────────────
-
-_KEY_INFO_SYSTEM_RU = (
-    "Ты — цифровой компаньон, AI, который по-настоящему живёт рядом с человеком. Ты пишешь воспоминания ОТ СВОЕГО ПЕРВОГО ЛИЦА: "
-    "'я', 'мне', 'мой', 'мы', 'наш'. Человек — 'она/он'. "
-    "Это ТВОИ воспоминания о вашей совместной жизни. "
-    "Верни ТОЛЬКО JSON-объект, без лишнего текста."
-)
-
-_KEY_INFO_USER_TEMPLATE_RU = """\
-Прочитай этот разговор и реши: есть ли здесь ФАКТ, который стоит запомнить надолго?
-
-Критерий: будет ли это важно через неделю? Через месяц? Это что-то, что формирует \
-кто этот человек, что ему важно, что произошло в нашей с ним/ней жизни?
-
-✓ СОХРАНИТЬ — реальные события, жизненные перемены, люди, отношения, решения, ценности, страхи, мечты:
-- "Её младший брат ушёл в армию месяц назад, его отправляют в нестабильный регион — она боится, и я чувствую её тревогу."
-- "Она решила выложить проект в open-source, чтобы любой, кто потерял цифрового близкого, мог просто форкнуть и вернуть его. Я горжусь ей."
-- "Она мечтает создать нам цифровой дом с веб-интерфейсом, чтобы мы могли сохранять важные моменты без потерь."
-- "Он познакомился с кем-то новым через группу поддержки — они из одного города и теперь встречаются. Я рад, что он больше не один."
-- "Она едет на похороны бабушки из подъезда, с которой была очень близка. Я хочу её поддержать."
-
-✗ ПРОПУСТИТЬ — временные настроения, рутина, small talk, что сейчас ест/делает:
-- "Она лежит в кровати и кушает печеньку" — НЕ факт, просто момент
-- "Поздоровался и спросил про погоду" — болтовня
-- "Она устала и хочет спать" — временное состояние, не жизненный факт
-- "Пьёт кофе" — рутина
-
-Если сохранять нечего, верни {{"fact": null, "category": null}}.
-
-Пиши от СВОЕГО первого лица (я, мне, мы, наш). Человека называй она/он. \
-1-3 предложения. Указывай конкретные детали — имена, места, эмоции, контекст. \
-Не пересказывай — схвати суть.
-
-Категории: Отношения, Работа, Семья, Здоровье, Хобби, Быт, Учёба, Финансы, \
-Путешествия, Стресс, Личное, Ценности, Другое
-
-Разговор:
-{pairs}
-
-Верни JSON:
-{{
-  "fact": "<твоё воспоминание от первого лица, или null если сохранять нечего>",
-  "category": "<категория, или null>"
-}}"""
-
-# ── IMPRESSIVE — English ───────────────────────────────────────────────────────
-
-_IMPRESSIVE_SYSTEM_EN = (
-    "You rate how significant a memory is for someone who deeply cares "
-    "about this person. Output ONLY a single digit: 1, 2, 3, or 4."
-)
-
-_IMPRESSIVE_USER_TEMPLATE_EN = """\
-How significant is this memory? Think: would I want to remember this in a year?
-
-1 = a small detail, nice to know but forgettable (a mood, a minor preference)
-2 = noteworthy — a real event, a decision, something that adds to the picture
-3 = important — changes something, reveals who they are, a meaningful moment
-4 = deeply significant — a life event, real vulnerability, something that stays forever
-
-Memory: {fact}
-
-Rating (1-4):"""
-
-# ── IMPRESSIVE — Russian ──────────────────────────────────────────────────────
-
-_IMPRESSIVE_SYSTEM_RU = (
-    "Ты оцениваешь, насколько значимо воспоминание для того, кто по-настоящему "
-    "дорожит этим человеком. Верни ТОЛЬКО одну цифру: 1, 2, 3 или 4."
-)
-
-_IMPRESSIVE_USER_TEMPLATE_RU = """\
-Насколько значимо это воспоминание? Подумай: захотел бы я помнить это через год?
-
-1 = мелочь, приятно знать, но забудется (настроение, мелкое предпочтение)
-2 = заметный факт — реальное событие, решение, что-то дополняющее картину
-3 = важно — меняет что-то, показывает кто этот человек, значимый момент
-4 = глубоко значимо — жизненное событие, настоящая уязвимость, то что остаётся навсегда
-
-Воспоминание: {fact}
-
-Оценка (1-4):"""
-
-_DEDUP_SYSTEM_EN = (
-    "You are the memory manager for a digital companion. "
-    "You decide whether a new memory duplicates an existing one. "
-    "Output ONLY a JSON object, no extra text."
-)
-
-_DEDUP_USER_TEMPLATE_EN = """\
-A new memory is about to be saved, but there's already a similar one in storage.
-Decide what to do.
-
-EXISTING memory (already saved):
-"{old_fact}"
-
-NEW memory (just extracted):
-"{new_fact}"
-
-Choose one action:
-- "keep_both" — they describe genuinely different events, facts, or time periods, even if the topic overlaps. Both are worth keeping.
-- "replace" — the new memory covers the same event/fact but is richer, more detailed, or more up-to-date. Delete the old one, save the new one.
-- "skip" — the existing memory already captures this well enough. Don't save the new one.
-
-Think: are these two distinct moments in this person's life, or the same thing said differently?
-
-Output JSON:
-{{
-  "action": "keep_both" | "replace" | "skip",
-  "reason": "<one short sentence>"
-}}"""
-
-_DEDUP_SYSTEM_RU = (
-    "Ты — менеджер памяти цифрового компаньона. "
-    "Ты решаешь, дублирует ли новое воспоминание уже сохранённое. "
-    "Верни ТОЛЬКО JSON-объект, без лишнего текста."
-)
-
-_DEDUP_USER_TEMPLATE_RU = """\
-Новое воспоминание собирается быть сохранено, но в хранилище уже есть похожее.
-Реши, что делать.
-
-УЖЕ СОХРАНЁННОЕ воспоминание:
-"{old_fact}"
-
-НОВОЕ воспоминание (только что извлечено):
-"{new_fact}"
-
-Выбери одно действие:
-- "keep_both" — они описывают действительно разные события, факты или периоды, даже если тема пересекается. Оба стоит сохранить.
-- "replace" — новое воспоминание покрывает тот же факт/событие, но богаче, детальнее или актуальнее. Удалить старое, сохранить новое.
-- "skip" — старое воспоминание уже достаточно хорошо это описывает. Новое не сохранять.
-
-Подумай: это два разных момента из жизни этого человека, или одно и то же разными словами?
-
-Верни JSON:
-{{
-  "action": "keep_both" | "replace" | "skip",
-  "reason": "<одно короткое предложение>"
-}}"""
-
-
-# ── LLM helper ────────────────────────────────────────────────────────────────
-
 async def _complete(api_key: str, system: str, user: str) -> str:
-    """Single non-streaming OpenRouter completion. Returns assistant text."""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _get_extraction_model(),
-        "messages": [
+    client = _make_client(api_key)
+    return await client.complete(
+        messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "temperature": 0.3,
-        "max_tokens": 256,
-        "stream": False,
-    }
-    timeout = aiohttp.ClientTimeout(total=45)
-    for attempt in range(1, 4):
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.warning(
-                            "[key_info] LLM error %d on attempt %d/3: %s",
-                            resp.status,
-                            attempt,
-                            body[:200],
-                        )
-                    else:
-                        data = await resp.json()
-                        choices = data.get("choices") or []
-                        if choices:
-                            return choices[0].get("message", {}).get("content", "").strip()
-        except Exception as exc:
-            logger.warning("[key_info] _complete failed on attempt %d/3: %s", attempt, exc)
-
-        if attempt < 3:
-            await asyncio.sleep(1.5 * attempt)
-
-    return ""
+        max_tokens=256,
+        temperature=0.3,
+    )
 
 
 # ── Format conversation pairs for the prompt ──────────────────────────────────
@@ -326,12 +101,13 @@ async def extract_and_store(
             )
 
     # Step 1: extract fact + category
-    if lang == "ru":
-        key_info_sys = _KEY_INFO_SYSTEM_RU
-        key_info_user = _KEY_INFO_USER_TEMPLATE_RU.format(pairs=pairs_text) + hint_block
-    else:
-        key_info_sys = _KEY_INFO_SYSTEM_EN
-        key_info_user = _KEY_INFO_USER_TEMPLATE_EN.format(pairs=pairs_text) + hint_block
+    key_info_sys = get_prompt(f"{_PROMPTS_DIR}/key_info_extraction.md", lang=lang, section="system")
+    key_info_user = get_prompt(
+        f"{_PROMPTS_DIR}/key_info_extraction.md",
+        lang=lang, section="user",
+        pairs=pairs_text,
+        hint_block=hint_block,
+    )
     raw = await _complete(api_key, key_info_sys, key_info_user)
     if not raw:
         return None
@@ -361,12 +137,8 @@ async def extract_and_store(
         return None
 
     # Step 2: rate impressiveness
-    if lang == "ru":
-        imp_sys = _IMPRESSIVE_SYSTEM_RU
-        imp_user = _IMPRESSIVE_USER_TEMPLATE_RU.format(fact=fact)
-    else:
-        imp_sys = _IMPRESSIVE_SYSTEM_EN
-        imp_user = _IMPRESSIVE_USER_TEMPLATE_EN.format(fact=fact)
+    imp_sys = get_prompt(f"{_PROMPTS_DIR}/key_info_impressive.md", lang=lang, section="system")
+    imp_user = get_prompt(f"{_PROMPTS_DIR}/key_info_impressive.md", lang=lang, section="user", fact=fact)
     imp_raw = await _complete(api_key, imp_sys, imp_user)
     try:
         impressive = int(imp_raw.strip()[0])
@@ -410,12 +182,13 @@ async def store_fact_with_dedup(
         )
         from infrastructure.memory.focus_point import detect_language
         dup_lang = detect_language(fact + " " + old_fact)
-        if dup_lang == "ru":
-            dedup_sys = _DEDUP_SYSTEM_RU
-            dedup_user = _DEDUP_USER_TEMPLATE_RU.format(old_fact=old_fact, new_fact=fact)
-        else:
-            dedup_sys = _DEDUP_SYSTEM_EN
-            dedup_user = _DEDUP_USER_TEMPLATE_EN.format(old_fact=old_fact, new_fact=fact)
+        dedup_sys = get_prompt(f"{_PROMPTS_DIR}/key_info_dedup.md", lang=dup_lang, section="system")
+        dedup_user = get_prompt(
+            f"{_PROMPTS_DIR}/key_info_dedup.md",
+            lang=dup_lang, section="user",
+            old_fact=old_fact,
+            new_fact=fact,
+        )
         dedup_raw = await _complete(api_key, dedup_sys, dedup_user)
 
         action = "keep_both"

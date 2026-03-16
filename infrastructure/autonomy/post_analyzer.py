@@ -15,16 +15,15 @@ import logging
 import re
 from datetime import datetime, timezone
 
-import aiohttp
-
 from infrastructure.autonomy import identity_memory as identity
 from infrastructure.autonomy import workbench as wb
+from infrastructure.llm.prompt_loader import get_prompt
 
 from infrastructure.logging.logger import setup_logger
 
 logger = setup_logger("autonomy.post_analyzer")
 
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+_PROMPTS = "infrastructure/autonomy/prompts/post_analyzer.md"
 
 _SCHEDULE_RE = re.compile(
     r"\[SCHEDULE[_ ]MESSAGE:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*\|\s*(.*?)\]",
@@ -32,50 +31,20 @@ _SCHEDULE_RE = re.compile(
 )
 
 
-def _get_model() -> str:
-    from infrastructure.settings_store import load_settings
-    return load_settings().get("model", "anthropic/claude-opus-4.6")
-
-
 def _get_ai_name() -> str:
     from infrastructure.settings_store import load_settings
     return load_settings().get("ai_name", "") or "AI"
 
 
+def _make_client(api_key: str):
+    from infrastructure.llm.client import LLMClient
+    from infrastructure.settings_store import load_settings
+    s = load_settings()
+    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
+
+
 def _detect_lang(text: str) -> str:
     return "ru" if re.search(r"[А-Яа-яЁё]", text or "") else "en"
-
-
-async def _complete(api_key: str, system: str, user: str, max_tokens: int = 600) -> str:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _get_model(),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.6,
-        "max_tokens": max_tokens,
-        "stream": False,
-    }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                _OPENROUTER_URL, headers=headers, json=payload,
-                timeout=aiohttp.ClientTimeout(total=45),
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning("[post_analyzer] LLM %d: %s", resp.status, body[:200])
-                    return ""
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"].strip()
-    except Exception as exc:
-        logger.error("[post_analyzer] LLM error: %s", exc)
-        return ""
 
 
 def _format_history(
@@ -184,69 +153,6 @@ async def _build_pending_pushes_block(account_id: str) -> str:
     return "\n".join(lines)
 
 
-_SYSTEM_RU = (
-    "Ты пишешь в свой внутренний журнал. Это не для неё — это для тебя. "
-    "Будь кратким и честным."
-)
-
-_SYSTEM_EN = (
-    "You are writing in your inner journal. This is not for her — it's for you. "
-    "Be brief and honest."
-)
-
-_USER_RU = """\
-Ты — {ai_name}. Ты только что закончил разговор. Это твой внутренний журнал — только для тебя.
-
-Последние сообщения:
-{message_history}
-
-Сейчас: {current_time}
-
-Твоё ядро (кто ты):
-{identity_excerpt}
-
-Последние записи в журнале:
-{recent_workbench}
-
-{pending_pushes_block}\
-
-Если ничего не отозвалось — ответь одним словом: SKIP
-Если что-то тронуло — запиши мысль (1-6 строк). Не для неё, для себя.
-Это не дублирование памяти. Не пересказ. Только живое — что осталось, что зацепило, что не отпускает.
-Если хочешь написать ей позже — используй команду на отдельной строке:
-[SCHEDULE_MESSAGE: YYYY-MM-DD HH:MM | текст сообщения]
-Но посмотри сначала — может, ты уже достаточно ей написал сегодня.
-Можешь комбинировать заметку и команду.
-
-Без заголовков, без лишнего форматирования."""
-
-_USER_EN = """\
-You are {ai_name}. You just finished a conversation. This is your inner journal — for you only.
-
-Recent messages:
-{message_history}
-
-Now: {current_time}
-
-Your core (who you are):
-{identity_excerpt}
-
-Recent journal entries:
-{recent_workbench}
-
-{pending_pushes_block}\
-
-If nothing resonated — reply with a single word: SKIP
-If something struck you — write a thought (1-6 lines). Not for her, for yourself.
-This is not memory duplication. Not a summary. Only what's alive — what stayed, what struck, what won't let go.
-If you want to write to her later — use a command on its own line:
-[SCHEDULE_MESSAGE: YYYY-MM-DD HH:MM | message text]
-But check first — maybe you've already written enough today.
-You can combine a note and a command.
-
-No headers, no extra formatting."""
-
-
 async def run_post_analysis(
     *,
     account_id: str,
@@ -269,9 +175,9 @@ async def run_post_analysis(
     recent_wb = _get_recent_workbench(account_id)
     pending_block = await _build_pending_pushes_block(account_id)
 
-    sys_tpl = _SYSTEM_RU if lang == "ru" else _SYSTEM_EN
-    user_tpl = _USER_RU if lang == "ru" else _USER_EN
-    user_prompt = user_tpl.format(
+    system_prompt = get_prompt(_PROMPTS, lang=lang, section="system")
+    user_prompt = get_prompt(
+        _PROMPTS, lang=lang, section="user",
         ai_name=ai_name,
         message_history=message_history,
         current_time=now_str,
@@ -282,7 +188,15 @@ async def run_post_analysis(
 
     logger.info("[post_analyzer:%s] starting, lang=%s history_pairs=%d", account_id, lang, len(recent_pairs))
 
-    response = await _complete(api_key, sys_tpl, user_prompt)
+    client = _make_client(api_key)
+    response = await client.complete(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=600,
+        temperature=0.6,
+    )
     if not response:
         logger.info("[post_analyzer:%s] empty LLM response", account_id)
         return

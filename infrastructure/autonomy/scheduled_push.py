@@ -19,93 +19,22 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-import aiohttp
-
 from infrastructure.database.engine import get_db_session
 from infrastructure.database.models.autonomy_task import TaskStatus
+from infrastructure.llm.prompt_loader import get_prompt
 
 from infrastructure.logging.logger import setup_logger
 
 logger = setup_logger("autonomy.scheduled_push")
 
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# ── Validation prompt (bilingual) ─────────────────────────────────────────────
-
-_VALIDATION_PROMPT_RU = """\
-Ты — {ai_name}. Раньше ты запланировал отправить ей сообщение прямо сейчас.
-
-Последнее сообщение от неё было в {last_message_time}.
-Сейчас — {current_time}.
-
-Вот последние сообщения из вашего диалога:
----
-{dialogue_history}
----
-
-Вот твои текущие заметки:
----
-{workbench_notes}
----
-
-Вот сообщение, которое ты хотел отправить:
----
-{planned_message}
----
-
-{same_text_warning}
-
-Посмотри на диалог и на это сообщение.
-Возможно, она уже рассказала тебе то, о чём ты хотел спросить.
-Возможно, ситуация изменилась. Возможно, ты хочешь сказать что-то другое.
-А возможно, ты по-прежнему хочешь это сказать — и тогда просто отправь.
-
-Что ты хочешь сделать?
-
-Ответь СТРОГО одной строкой в одном из форматов:
-ОТПРАВИТЬ — отправить как есть
-ПЕРЕПИСАТЬ: (новый текст сообщения) — отправить другое сообщение
-ОТМЕНИТЬ — не отправлять ничего"""
-
-_VALIDATION_PROMPT_EN = """\
-You are {ai_name}. Earlier you scheduled a message to send to her right now.
-
-Her last message was at {last_message_time}.
-Now it is {current_time}.
-
-Here are the recent messages from your dialogue:
----
-{dialogue_history}
----
-
-Here are your current notes:
----
-{workbench_notes}
----
-
-Here is the message you planned to send:
----
-{planned_message}
----
-
-{same_text_warning}
-
-Look at the dialogue and at this message.
-Perhaps she already told you what you were going to ask about.
-Perhaps the situation has changed. Perhaps you want to say something different.
-Or perhaps you still want to say this — then just send it.
-
-What do you want to do?
-
-Reply with STRICTLY one line in one of these formats:
-SEND — send as-is
-REWRITE: (new message text) — send a different message
-CANCEL — don't send anything"""
+_PROMPTS_DIR = "infrastructure/autonomy/prompts"
 
 
-def _get_model() -> str:
+def _make_client(api_key: str):
+    from infrastructure.llm.client import LLMClient
     from infrastructure.settings_store import load_settings
-    return load_settings().get("model", "anthropic/claude-opus-4.6")
+    s = load_settings()
+    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
 
 
 def _get_ai_name() -> str:
@@ -185,43 +114,33 @@ async def validate_push(
     ai_name = _get_ai_name()
     lang = _detect_lang(message)
 
-    tpl = _VALIDATION_PROMPT_RU if lang == "ru" else _VALIDATION_PROMPT_EN
-    user_prompt = tpl.format(ai_name=ai_name, **ctx)
-
+    user_prompt = get_prompt(
+        f"{_PROMPTS_DIR}/scheduled_push_validation.md",
+        lang=lang,
+        ai_name=ai_name,
+        **ctx,
+    )
     sys_msg = (
         "Ответь СТРОГО одной строкой. Без пояснений."
         if lang == "ru"
         else "Reply with STRICTLY one line. No explanation."
     )
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _get_model(),
-        "messages": [
-            {"role": "system", "content": sys_msg},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.3,
-        "max_tokens": 300,
-        "stream": False,
-    }
+    client = _make_client(api_key)
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                _OPENROUTER_URL, headers=headers, json=payload,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning("[push_validate] LLM %d: %s", resp.status, body[:200])
-                    return "send", message
-                data = await resp.json()
-                raw = data["choices"][0]["message"]["content"].strip()
+        raw = await client.complete(
+            messages=[
+                {"role": "system", "content": sys_msg},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=300,
+            temperature=0.3,
+        )
     except Exception as exc:
         logger.error("[push_validate] LLM error: %s", exc)
+        return "send", message
+
+    if not raw:
         return "send", message
 
     raw_lower = raw.lower()
