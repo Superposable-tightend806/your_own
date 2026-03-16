@@ -409,8 +409,13 @@ def _build_pending_tasks_block(lang: str, tasks: list) -> str:
         ts = t.scheduled_at.strftime("%Y-%m-%d %H:%M") if t.scheduled_at else "—"
         lines.append(f"- [{ts}] {msg}")
     tasks_list = "\n".join(lines)
-    header = "## Твои незавершённые задачи:" if lang == "ru" else "## Your pending tasks:"
-    return f"{header}\n{tasks_list}\n\n"
+    if lang == "ru":
+        header = "## Твои незавершённые задачи:"
+        footer = "Ты сможешь переписать эти сообщения или отменить их в момент отправки — тогда ты увидишь весь свой журнал и само сообщение. Не переживай о них сейчас.\n"
+    else:
+        header = "## Your pending tasks:"
+        footer = "You will be able to rewrite or cancel these messages at the moment of sending — you will see your full journal and the message itself. Don't worry about them now.\n"
+    return f"{header}\n{tasks_list}\n{footer}\n"
 
 
 # ── Main run loop ─────────────────────────────────────────────────────────────

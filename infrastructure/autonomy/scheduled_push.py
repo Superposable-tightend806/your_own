@@ -54,8 +54,8 @@ async def _build_validation_context(account_id: str, message: str) -> dict:
 
     settings = load_settings()
     pairs_count = int(settings.get("history_pairs", 6))
-    now = datetime.now(timezone.utc)
-    now_str = now.strftime("%Y-%m-%d %H:%M UTC")
+    from infrastructure.settings_store import now_local
+    now_str = now_local().strftime("%Y-%m-%d %H:%M")
 
     dialogue_lines = []
     last_message_time = "неизвестно"
@@ -64,7 +64,8 @@ async def _build_validation_context(account_id: str, message: str) -> dict:
         repo = MessageRepository(db)
         last_user_at = await repo.get_last_user_message_at(account_id)
         if last_user_at:
-            last_message_time = last_user_at.strftime("%Y-%m-%d %H:%M UTC")
+            from infrastructure.settings_store import get_user_tz
+            last_message_time = last_user_at.astimezone(get_user_tz()).strftime("%Y-%m-%d %H:%M")
 
         pairs = await repo.get_recent_canonical_pairs(account_id, limit_pairs=pairs_count)
         for p in pairs:
@@ -75,7 +76,10 @@ async def _build_validation_context(account_id: str, message: str) -> dict:
             if a:
                 dialogue_lines.append(f"Ты: {a}")
 
-    workbench_content = wb.read(account_id) or "(пусто)"
+    _wb_entries = wb._parse_entries(wb.read(account_id) or "")
+    workbench_content = "\n---\n".join(
+        f"[{ts}] {body}" for ts, body in _wb_entries[-10:]
+    ) or "(пусто)"
 
     # Warn if the planned message was already sent recently
     same_text_warning = ""

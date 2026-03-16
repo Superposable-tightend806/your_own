@@ -9,7 +9,7 @@
 {dialogue_history}
 ---
 
-Вот твои текущие заметки:
+Вот последние записи из твоего внутреннего журнала:
 ---
 {workbench_notes}
 ---
@@ -44,7 +44,7 @@ Here are the recent messages from your dialogue:
 {dialogue_history}
 ---
 
-Here are your current notes:
+Here are your most recent inner journal entries:
 ---
 {workbench_notes}
 ---
