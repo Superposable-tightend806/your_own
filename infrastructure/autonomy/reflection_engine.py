@@ -161,13 +161,13 @@ async def _search_notes(account_id: str, query: str) -> str:
                     ):
                         if dist < 0.65:
                             ts = meta.get("created_at", "?")
-                            parts.append(f"[archive {ts}] {doc[:300]}")
+                            parts.append(f"[archive {ts}] {doc}")
     except Exception as exc:
         logger.warning("[reflection] search_notes (archive) error: %s", exc)
 
     current = wb.search(account_id, query)
     if current and not current.startswith("(workbench is empty)") and not current.startswith("No notes"):
-        parts.append(f"[workbench] {current[:500]}")
+        parts.append(f"[workbench] {current}")
 
     return "\n---\n".join(parts) if parts else "Ничего не найдено."
 
@@ -406,7 +406,7 @@ def _build_pending_tasks_block(lang: str, tasks: list) -> str:
         except (json.JSONDecodeError, TypeError):
             msg = str(t.payload)
         ts = t.scheduled_at.strftime("%Y-%m-%d %H:%M") if t.scheduled_at else "—"
-        lines.append(f"- [{ts}] {msg[:100]}")
+        lines.append(f"- [{ts}] {msg}")
     tasks_list = "\n".join(lines)
     header = "## Твои незавершённые задачи:" if lang == "ru" else "## Your pending tasks:"
     return f"{header}\n{tasks_list}\n\n"

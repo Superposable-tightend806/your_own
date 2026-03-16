@@ -93,7 +93,7 @@ async def _build_validation_context(account_id: str, message: str) -> dict:
         "current_time": now_str,
         "last_message_time": last_message_time,
         "dialogue_history": "\n".join(dialogue_lines) or "(пусто)",
-        "workbench_notes": workbench_content[:2000],
+        "workbench_notes": workbench_content,
         "planned_message": message,
         "same_text_warning": same_text_warning,
     }

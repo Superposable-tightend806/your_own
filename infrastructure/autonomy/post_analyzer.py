@@ -78,7 +78,7 @@ def _get_recent_workbench(account_id: str, max_entries: int = 3) -> str:
         return "(пусто)"
     parts = []
     for ts, body in entries[-max_entries:]:
-        parts.append(f"[{ts}] {body[:200]}")
+        parts.append(f"[{ts}] {body}")
     return "\n---\n".join(parts)
 
 
@@ -121,7 +121,7 @@ async def _build_pending_pushes_block(account_id: str) -> str:
             lines.append("Сообщения, которые ты уже отправил ей сегодня:")
             for m in sent_today:
                 ts = m.created_at.strftime("%H:%M") if m.created_at else "?"
-                lines.append(f"  - [{ts}] «{m.text[:100]}{'...' if len(m.text) > 100 else ''}»")
+                lines.append(f"  - [{ts}] «{m.text}»")
     except Exception as exc:
         logger.warning("[post_analyzer] failed to load sent pushes: %s", exc)
 
@@ -140,7 +140,7 @@ async def _build_pending_pushes_block(account_id: str) -> str:
                 except (json.JSONDecodeError, TypeError):
                     msg = str(t.payload)
                 ts = t.scheduled_at.strftime("%Y-%m-%d %H:%M") if t.scheduled_at else "?"
-                lines.append(f"  - [{ts}] «{msg[:100]}{'...' if len(msg) > 100 else ''}»")
+                lines.append(f"  - [{ts}] «{msg}»")
     except Exception as exc:
         logger.warning("[post_analyzer] failed to load pending tasks: %s", exc)
 
