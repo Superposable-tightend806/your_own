@@ -13,19 +13,26 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  type ScrollViewProps,
 } from "react-native";
 import { Stack } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
-import { apiFetch, apiFetchStreaming, loadSettings, loadWorkbenchLatest } from "@/lib/api";
+import {
+  KeyboardChatScrollView,
+  KeyboardStickyView,
+  type KeyboardChatScrollViewProps,
+} from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { apiFetch, apiFetchStreaming, getBackendUrl, loadSettings, loadWorkbenchLatest } from "@/lib/api";
 import type { HistoryPair, Message } from "@/lib/types";
 import MessageContent from "@/components/MessageContent";
 import { WorkbenchDotsBtn, WorkbenchBar } from "@/components/WorkbenchTicker";
 
 const HISTORY_BATCH = 25;
 const MAX_IMAGES = 4;
-const EMULATED_CHUNK = 4;
-const EMULATED_DELAY = 12;
+const EMULATED_CHUNK = 3;
+const EMULATED_DELAY = 22;
 
 const VISION_MODELS = new Set([
   "anthropic/claude-opus-4.6",
@@ -43,10 +50,19 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function pairToMessages(pair: HistoryPair): Message[] {
+function pairToMessages(pair: HistoryPair, baseUrl: string): Message[] {
   const out: Message[] = [];
-  if (pair.user_text) {
-    out.push({ id: `${pair.pair_id}-user`, role: "user", content: pair.user_text, pairId: pair.pair_id });
+  const userImageUrls = pair.user_image_urls?.length
+    ? pair.user_image_urls.map((u) => (u.startsWith("http") ? u : `${baseUrl.replace(/\/$/, "")}${u}`))
+    : undefined;
+  if (pair.user_text || userImageUrls?.length) {
+    out.push({
+      id: `${pair.pair_id}-user`,
+      role: "user",
+      content: pair.user_text ?? "",
+      pairId: pair.pair_id,
+      imageUrls: userImageUrls,
+    });
   }
   if (pair.assistant_text) {
     out.push({ id: `${pair.pair_id}-assistant`, role: "assistant", content: pair.assistant_text, pairId: pair.pair_id });
@@ -63,19 +79,21 @@ const MessageBubble = React.memo(function MessageBubble({
   msg: Message;
   isStreamingLast: boolean;
 }) {
+  const [memoryExpanded, setMemoryExpanded] = React.useState(false);
   const isUser = msg.role === "user";
   const imageUrls = msg.imageUrls ?? (msg.imageUrl ? [msg.imageUrl] : []);
+  const hasMemory = !isUser && (msg.chromaFacts?.length ?? 0) > 0;
   return (
     <View style={[styles.bubbleWrap, isUser ? styles.bubbleWrapRight : styles.bubbleWrapLeft]}>
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
         {imageUrls.length > 0 && (
-          <View style={styles.attachedImages}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.attachedImages}>
             {imageUrls.map((uri, i) => (
               <Image key={i} source={{ uri }} style={styles.attachedImage} resizeMode="cover" />
             ))}
-          </View>
+          </ScrollView>
         )}
-        {msg.content ? (
+        {(msg.content || (msg.role === "assistant" && isStreamingLast)) ? (
           <MessageContent
             content={msg.content}
             role={msg.role}
@@ -84,7 +102,59 @@ const MessageBubble = React.memo(function MessageBubble({
           />
         ) : null}
       </View>
+      {hasMemory && (
+        <>
+          <TouchableOpacity
+            onPress={() => setMemoryExpanded((v) => !v)}
+            style={styles.memoryToggle}
+          >
+            <Text style={styles.memoryToggleText}>
+              {"<>"} memory {memoryExpanded ? "hide" : "show"}
+            </Text>
+          </TouchableOpacity>
+          {memoryExpanded && (
+            <View style={styles.memoryPanel}>
+              {msg.chromaFacts!.map((fact, fi) => (
+                <View key={fact.id || fi} style={styles.memoryFact}>
+                  <View style={styles.memoryFactHeader}>
+                    <Text style={styles.memoryFactCategory}>{fact.category || "memory"}</Text>
+                    <View style={styles.memoryFactMeta}>
+                      <Text style={styles.memoryFactMetaText}>{fact.time_label}</Text>
+                      {fact.impressive > 0 && (
+                        <Text style={styles.memoryFactStars}>{"★".repeat(Math.min(fact.impressive, 4))}</Text>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={styles.memoryFactText}>{fact.text}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </>
+      )}
     </View>
+  );
+});
+
+// ── Chat scroll wrapper for KeyboardChatScrollView + FlatList ────────────────
+
+type ChatScrollRef = React.ElementRef<typeof KeyboardChatScrollView>;
+
+const ChatScrollView = React.forwardRef<
+  ChatScrollRef,
+  ScrollViewProps & KeyboardChatScrollViewProps
+>(({ inverted, ...props }, ref) => {
+  const { bottom } = useSafeAreaInsets();
+  return (
+    <KeyboardChatScrollView
+      ref={ref}
+      inverted={inverted}
+      automaticallyAdjustContentInsets={false}
+      contentInsetAdjustmentBehavior="never"
+      keyboardDismissMode="interactive"
+      offset={bottom}
+      {...props}
+    />
   );
 });
 
@@ -111,6 +181,11 @@ export default function ChatScreen() {
   const flatListRef = useRef<FlatList<Message>>(null);
 
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
+
+  const renderScrollComponent = useCallback(
+    (props: ScrollViewProps) => <ChatScrollView {...props} />,
+    [],
+  );
 
   // ── Load initial data ────────────────────────────────────────────────────
 
@@ -167,8 +242,9 @@ export default function ChatScreen() {
       const res = await apiFetch(`/api/chat/history?${params}`);
       if (!res.ok) throw new Error(res.status === 401 ? "auth" : `${res.status}`);
 
+      const baseUrl = await getBackendUrl();
       const data = await res.json() as { pairs: HistoryPair[]; next_before?: string | null; has_more: boolean };
-      const loaded = data.pairs.flatMap(pairToMessages);
+      const loaded = data.pairs.flatMap((p) => pairToMessages(p, baseUrl));
 
       setMessages(prev => before ? [...loaded, ...prev] : loaded);
       setCursor(data.next_before ?? null);
@@ -234,6 +310,7 @@ export default function ChatScreen() {
       const msgPayload = JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content })));
 
       let response: Response;
+      const baseUrl = await getBackendUrl();
 
       if (hasImages) {
         const form = new FormData();
@@ -243,7 +320,7 @@ export default function ChatScreen() {
         for (const att of sentAttachments) {
           form.append("images", { uri: att.uri, name: att.fileName, type: att.mimeType } as any);
         }
-        response = await apiFetch("/api/chat", {
+        response = await apiFetchStreaming("/api/chat", {
           method: "POST",
           body: form,
           signal: abortRef.current.signal,
@@ -266,7 +343,7 @@ export default function ChatScreen() {
       }
 
       const SKIP_EVENTS = new Set([
-        "memory", "skill", "search_start", "search_results",
+        "skill", "search_start", "search_results",
         "web_start", "web_done", "image_start", "image_ready",
       ]);
 
@@ -320,6 +397,42 @@ export default function ChatScreen() {
               continue;
             }
 
+            if (eventType === "image_urls") {
+              try {
+                const { urls } = JSON.parse(chunk) as { urls?: string[] };
+                if (urls?.length) {
+                  const prefix = baseUrl.replace(/\/$/, "");
+                  const fullUrls = urls.map((u) => (u.startsWith("http") ? u : `${prefix}${u}`));
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const userIdx = updated.length - 2;
+                    if (userIdx >= 0 && updated[userIdx]?.role === "user") {
+                      updated[userIdx] = { ...updated[userIdx], imageUrls: fullUrls };
+                    }
+                    return updated;
+                  });
+                }
+              } catch { /* ignore */ }
+              continue;
+            }
+
+            if (eventType === "memory") {
+              try {
+                const { chroma_facts } = JSON.parse(chunk) as { chroma_facts?: Array<{ id: string; text: string; category: string; impressive: number; time_label: string }> };
+                if (chroma_facts?.length) {
+                  setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      updated[updated.length - 1] = { ...last, chromaFacts: chroma_facts };
+                    }
+                    return updated;
+                  });
+                }
+              } catch { /* ignore */ }
+              continue;
+            }
+
             if (eventType && SKIP_EVENTS.has(eventType)) continue;
 
             chunkBufRef.current += chunk;
@@ -330,6 +443,43 @@ export default function ChatScreen() {
       } else {
         // Emulate streaming: reveal text progressively so it doesn't flash in
         const fullText = await response.text();
+        for (const event of fullText.split("\n\n")) {
+          const et = event.split("\n").find(l => l.startsWith("event: "))?.slice(7).trim();
+          const dl = event.split("\n").filter(l => l.startsWith("data: ")).map(l => l.slice(6));
+          if (!dl.length) continue;
+          const d = dl.join("\n");
+          if (et === "image_urls") {
+            try {
+              const { urls } = JSON.parse(d) as { urls?: string[] };
+              if (urls?.length) {
+                const prefix = baseUrl.replace(/\/$/, "");
+                const fullUrls = urls.map((u) => (u.startsWith("http") ? u : `${prefix}${u}`));
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const userIdx = updated.length - 2;
+                  if (userIdx >= 0 && updated[userIdx]?.role === "user") {
+                    updated[userIdx] = { ...updated[userIdx], imageUrls: fullUrls };
+                  }
+                  return updated;
+                });
+              }
+            } catch { /* ignore */ }
+          } else if (et === "memory") {
+            try {
+              const { chroma_facts } = JSON.parse(d) as { chroma_facts?: Array<{ id: string; text: string; category: string; impressive: number; time_label: string }> };
+              if (chroma_facts?.length) {
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === "assistant") {
+                    updated[updated.length - 1] = { ...last, chromaFacts: chroma_facts };
+                  }
+                  return updated;
+                });
+              }
+            } catch { /* ignore */ }
+          }
+        }
         const content = parseSseText(fullText);
         for (let i = 0; i < content.length; i += EMULATED_CHUNK) {
           const partial = content.slice(0, i + EMULATED_CHUNK);
@@ -403,6 +553,7 @@ export default function ChatScreen() {
         keyExtractor={m => m.id}
         renderItem={renderItem}
         inverted
+        renderScrollComponent={renderScrollComponent}
         contentContainerStyle={styles.list}
         onEndReached={() => { if (hasMore && !loadingHistory) void loadHistory(cursor); }}
         onEndReachedThreshold={0.3}
@@ -415,9 +566,7 @@ export default function ChatScreen() {
         keyboardShouldPersistTaps="handled"
       />
 
-      {/* Input area — sticks above keyboard automatically */}
       <KeyboardStickyView style={styles.stickyInput}>
-        {/* Image previews strip */}
         {attachments.length > 0 && (
           <View style={styles.previewStrip}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewScroll}>
@@ -433,7 +582,6 @@ export default function ChatScreen() {
           </View>
         )}
 
-        {/* Input row */}
         <View style={styles.inputRow}>
           {canAttach && (
             <TouchableOpacity
@@ -482,8 +630,54 @@ const styles = StyleSheet.create({
   bubbleUser: { backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
   bubbleAssistant: { backgroundColor: "transparent" },
 
-  attachedImages: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 },
+  attachedImages: { flexDirection: "row", gap: 6, marginBottom: 8 },
   attachedImage: { width: 160, height: 120, borderRadius: 2 },
+
+  memoryToggle: { marginTop: 8, alignSelf: "flex-start" },
+  memoryToggleText: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 9,
+    letterSpacing: 3,
+    textTransform: "uppercase",
+  },
+  memoryPanel: {
+    marginTop: 8,
+    width: "88%",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.02)",
+    padding: 12,
+    gap: 12,
+  },
+  memoryFact: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    padding: 10,
+  },
+  memoryFactHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  memoryFactCategory: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 9,
+    letterSpacing: 3,
+    textTransform: "uppercase",
+  },
+  memoryFactMeta: { flexDirection: "row", alignItems: "center", gap: 8 },
+  memoryFactMetaText: {
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 9,
+    letterSpacing: 2,
+  },
+  memoryFactStars: { color: "rgba(255,255,255,0.3)", fontSize: 10 },
+  memoryFactText: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 12,
+    lineHeight: 18,
+  },
 
   stickyInput: {
     backgroundColor: "#000",

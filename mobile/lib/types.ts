@@ -6,6 +6,7 @@ export interface Message {
   content: string;
   imageUrl?: string;
   imageUrls?: string[];
+  chromaFacts?: ChromaFact[];
   createdAt?: string;
   pairId?: string;
 }
@@ -24,6 +25,7 @@ export interface HistoryPair {
   pair_created_at?: string | null;
   user_text: string;
   assistant_text: string;
+  user_image_urls?: string[] | null;
 }
 
 export interface HistoryResponse {

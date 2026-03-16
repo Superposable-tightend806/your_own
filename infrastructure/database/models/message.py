@@ -37,6 +37,7 @@ class Message(Base):
     # ── semantic metadata ─────────────────────────────────────────────────────
     focus_point = Column(ARRAY(Text), nullable=True)
     emoji       = Column(String(8), nullable=True)
+    image_urls  = Column(ARRAY(Text), nullable=True)
 
     # ── pgvector embedding ────────────────────────────────────────────────────
     # DB column is vector(384); inserted via raw SQL with ::vector cast.

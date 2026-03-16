@@ -56,9 +56,11 @@ MAX_CHAT_IMAGES = 8
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _LOGS_DIR = _PROJECT_ROOT / "logs"
 _GENERATED_IMAGES_DIR = _PROJECT_ROOT / "generated_images"
+_USER_UPLOADS_DIR = _PROJECT_ROOT / "user_uploads"
 
 _LOGS_DIR.mkdir(parents=True, exist_ok=True)
 _GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+_USER_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 _DBG_PATH = _LOGS_DIR / "chat_debug.log"
 
@@ -174,6 +176,7 @@ async def chat_history(
                 "pair_created_at": item["pair_created_at"].isoformat() if item.get("pair_created_at") else None,
                 "user_text": item["user_text"],
                 "assistant_text": item["assistant_text"],
+                "user_image_urls": item.get("user_image_urls"),
             }
             for item in pairs
         ],
@@ -260,6 +263,22 @@ async def chat(
         if payload:
             image_items.append((payload, uploaded.content_type or "image/jpeg"))
 
+    upload_urls: list[str] = []
+    for payload, content_type in image_items:
+        ext = "jpg"
+        if content_type:
+            ct = content_type.lower()
+            if "png" in ct:
+                ext = "png"
+            elif "webp" in ct:
+                ext = "webp"
+            elif "gif" in ct:
+                ext = "gif"
+        filename = f"{uuid.uuid4().hex}.{ext}"
+        filepath = _USER_UPLOADS_DIR / filename
+        filepath.write_bytes(payload)
+        upload_urls.append(f"/api/user_uploads/{filename}")
+
     client = LLMClient(
         api_key=api_key,
         model=model,
@@ -295,6 +314,7 @@ async def chat(
                 role="user",
                 text=current_user_text,
                 created_at=user_created_at,
+                image_urls=upload_urls if upload_urls else None,
             ),
             *build_chunk_rows(
                 pair_id=pair_id,
@@ -318,6 +338,7 @@ async def chat(
     # ── Chroma long-term memory block ──────────────────────────────────────
     chroma_memory_block: Optional[str] = None
     chroma_fact_ids: list[str] = []
+    chroma_facts_for_ui: list[dict] = []
     if current_user_text.strip():
         try:
             pipeline = get_chroma_pipeline()
@@ -333,6 +354,19 @@ async def chat(
             if chroma_facts:
                 chroma_fact_ids = [f["id"] for f in chroma_facts]
                 chroma_memory_block = _build_chroma_block(chroma_facts, prompt_language)
+                for f in chroma_facts:
+                    meta = f.get("metadata") or {}
+                    ts = meta.get("last_used") or meta.get("created_at")
+                    chroma_facts_for_ui.append({
+                        "id": f.get("id", ""),
+                        "text": f.get("text", ""),
+                        "category": meta.get("category", ""),
+                        "impressive": meta.get("impressive", 0),
+                        "time_label": humanize_timestamp(
+                            datetime.fromisoformat(ts) if ts else None,
+                            prompt_language,
+                        ),
+                    })
             logger.info("[chat] chroma facts=%d", len(chroma_facts or []))
         except Exception as exc:
             logger.warning("[chat] Chroma retrieval failed: %s", exc)
@@ -565,6 +599,10 @@ async def chat(
     )
 
     async def event_stream():
+        if upload_urls:
+            yield "event: image_urls\n"
+            yield f"data: {json.dumps({'urls': upload_urls})}\n\n"
+
         assistant_parts: list[str] = []
         stream_completed = False
         buffering = False
@@ -913,37 +951,9 @@ async def chat(
                 except Exception as exc:
                     logger.warning("[chat] Chroma update_usage failed: %s", exc)
 
-            chroma_for_ui: list[dict] = []
-            if current_user_text.strip():
-                try:
-                    _pipe = get_chroma_pipeline()
-                    _facts = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: _pipe.query_similar_multi(
-                            account_id=account_id or "default",
-                            message=current_user_text,
-                            top_k=5,
-                            days_cutoff=cutoff_days,
-                        )
-                    )
-                    for f in (_facts or []):
-                        meta = f.get("metadata") or {}
-                        ts = meta.get("last_used") or meta.get("created_at")
-                        chroma_for_ui.append({
-                            "id": f.get("id", ""),
-                            "text": f.get("text", ""),
-                            "category": meta.get("category", ""),
-                            "impressive": meta.get("impressive", 0),
-                            "time_label": humanize_timestamp(
-                                datetime.fromisoformat(ts) if ts else None,
-                                prompt_language,
-                            ),
-                        })
-                except Exception:
-                    pass
-
+            # Use the same chroma_facts that were injected into the model (no second query)
             yield "event: memory\n"
-            yield f"data: {json.dumps({'chroma_facts': chroma_for_ui})}\n\n"
+            yield f"data: {json.dumps({'chroma_facts': chroma_facts_for_ui})}\n\n"
 
             # save_memory_results are now embedded in the text as [SAVED_FACT: ...] markers
 

@@ -41,6 +41,17 @@ const BAR_H = 64;
 const FONT_SIZE = 13;
 const SPEED = 60; // px per second
 
+function getEmptyLabel(): string {
+  try {
+    const locale = typeof Intl !== "undefined" && Intl.DateTimeFormat
+      ? new Intl.DateTimeFormat().resolvedOptions().locale
+      : "en";
+    return locale.toLowerCase().startsWith("ru") ? "Тишина..." : "Silence...";
+  } catch {
+    return "Silence...";
+  }
+}
+
 export function WorkbenchBar({
   open,
   text,
@@ -66,9 +77,10 @@ export function WorkbenchBar({
   }, [open]);
 
   // Start / stop marquee
+  const displayText = (text && text.trim()) ? text : getEmptyLabel();
   useEffect(() => {
     animRef.current?.stop();
-    if (!open || !text || containerW === 0 || textW === 0) return;
+    if (!open || !displayText || containerW === 0 || textW === 0) return;
 
     scrollX.setValue(containerW);
     const totalDist = containerW + textW;
@@ -85,7 +97,7 @@ export function WorkbenchBar({
     animRef.current.start();
 
     return () => { animRef.current?.stop(); };
-  }, [open, text, containerW, textW]);
+  }, [open, displayText, containerW, textW]);
 
   const handleTextLayout = (e: NativeSyntheticEvent<TextLayoutEventData>) => {
     const lines = e.nativeEvent.lines;
@@ -94,8 +106,6 @@ export function WorkbenchBar({
     }
   };
 
-  if (!text) return null;
-
   return (
     <Animated.View style={[sty.bar, { height: barH }]}>
       {/* Hidden measurer — uses onTextLayout for actual text pixel width */}
@@ -103,7 +113,7 @@ export function WorkbenchBar({
         style={[sty.tickerText, sty.measurer]}
         onTextLayout={handleTextLayout}
       >
-        {text}
+        {displayText}
       </Text>
 
       {/* Visible clip container */}
@@ -120,7 +130,7 @@ export function WorkbenchBar({
             },
           ]}
         >
-          {text}
+          {displayText}
         </Animated.Text>
       </View>
     </Animated.View>

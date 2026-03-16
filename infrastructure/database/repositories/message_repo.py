@@ -38,11 +38,11 @@ class MessageRepository:
             "INSERT INTO messages ("
             "  message_id, pair_id, account_id, conversation_id,"
             "  created_at, role, text, message_kind, source, chunk_index,"
-            "  focus_point, emoji, embedding"
+            "  focus_point, emoji, image_urls, embedding"
             ") VALUES ("
             "  :message_id, :pair_id, :account_id, :conversation_id,"
             "  :created_at, :role, :text, :message_kind, :source, :chunk_index,"
-            "  :focus_point, :emoji, {emb_expr}"
+            "  :focus_point, :emoji, :image_urls, {emb_expr}"
             ") ON CONFLICT (message_id) DO NOTHING"
         )
 
@@ -72,6 +72,7 @@ class MessageRepository:
                     "chunk_index":     m.chunk_index,
                     "focus_point":     m.focus_point,
                     "emoji":           m.emoji,
+                    "image_urls":     getattr(m, "image_urls", None),
                     "embedding":       emb_str,
                 },
             )
@@ -246,6 +247,7 @@ class MessageRepository:
                 "created_at": None,
                 "user_canonical": None,
                 "assistant_canonical": None,
+                "user_image_urls": None,
                 "user_chunks": [],
                 "assistant_chunks": [],
             }
@@ -256,6 +258,8 @@ class MessageRepository:
             entry["created_at"] = entry["created_at"] or row.created_at
             if row.message_kind == "canonical":
                 entry[f"{row.role}_canonical"] = row.text
+                if row.role == "user" and getattr(row, "image_urls", None):
+                    entry["user_image_urls"] = list(row.image_urls)
             else:
                 entry[f"{row.role}_chunks"].append((row.chunk_index or 0, row.text))
 
@@ -273,6 +277,7 @@ class MessageRepository:
                 "created_at": entry["created_at"],
                 "user_text": user_text.strip(),
                 "assistant_text": assistant_text.strip(),
+                "user_image_urls": entry.get("user_image_urls"),
             })
 
         result.sort(key=lambda item: position.get(item["pair_id"], 0))

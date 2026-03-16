@@ -99,7 +99,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.chat import router as chat_router, _GENERATED_IMAGES_DIR  # noqa: E402
+from api.chat import router as chat_router, _GENERATED_IMAGES_DIR, _USER_UPLOADS_DIR  # noqa: E402
 from api.memory import router as memory_router                      # noqa: E402
 from api.startup_api import router as startup_router                # noqa: E402
 from api.chroma_memory import router as chroma_router               # noqa: E402
@@ -111,8 +111,9 @@ app.include_router(startup_router)
 app.include_router(chroma_router)
 app.include_router(settings_router)
 
-# Serve generated images as static files
+# Serve generated images and user uploads as static files
 app.mount("/api/generated_images", StaticFiles(directory=str(_GENERATED_IMAGES_DIR)), name="generated_images")
+app.mount("/api/user_uploads", StaticFiles(directory=str(_USER_UPLOADS_DIR)), name="user_uploads")
 
 
 @app.get("/")

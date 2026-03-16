@@ -316,7 +316,12 @@ const MessageContent = React.memo(function MessageContent({
   }
 
   if (!content && isStreaming) {
-    return <Text style={s.assistantText}>…</Text>;
+    return (
+      <View style={s.streamingPlaceholder}>
+        <Text style={s.assistantText}>…</Text>
+        {showCursor && <Text style={s.cursor}>▋</Text>}
+      </View>
+    );
   }
 
   return (
@@ -351,6 +356,7 @@ export default MessageContent;
 const s = StyleSheet.create({
   userText: { color: "rgba(255,255,255,0.9)", fontSize: 15, lineHeight: 22, fontWeight: "300" },
   assistantText: { color: "rgba(255,255,255,0.8)", fontSize: 15, lineHeight: 22, fontWeight: "300" },
+  streamingPlaceholder: { flexDirection: "row" as const, alignItems: "center", gap: 4 },
   cursor: { color: "rgba(255,255,255,0.6)", fontSize: 14 },
 
   // Skill badges

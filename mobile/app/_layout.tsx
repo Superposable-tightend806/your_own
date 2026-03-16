@@ -26,7 +26,7 @@ export default function RootLayout() {
         >
           <Stack.Screen name="index" options={{ title: "YOUR OWN" }} />
           <Stack.Screen name="chat" options={{ title: "CHAT" }} />
-          <Stack.Screen name="dashboard/index" options={{ title: "DASHBOARD" }} />
+          <Stack.Screen name="dashboard/index" options={{ title: "" }} />
           <Stack.Screen name="dashboard/settings" options={{ title: "SETTINGS" }} />
         </Stack>
         <InAppNotification />

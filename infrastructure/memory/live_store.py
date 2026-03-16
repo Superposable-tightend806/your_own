@@ -20,6 +20,7 @@ def build_canonical_row(
     text: str,
     created_at: datetime | None = None,
     source: str = "chat",
+    image_urls: list[str] | None = None,
 ) -> Message:
     return Message(
         message_id=uuid.uuid4(),
@@ -33,6 +34,7 @@ def build_canonical_row(
         chunk_index=None,
         focus_point=None,
         embedding=None,
+        image_urls=image_urls,
     )
 
 
