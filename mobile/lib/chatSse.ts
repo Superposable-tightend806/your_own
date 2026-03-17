@@ -1,0 +1,68 @@
+import type { ChromaFact } from "@/lib/types";
+
+export type ChatSseEvent =
+  | { type: "done" }
+  | { type: "text"; chunk: string }
+  | { type: "rewrite"; text: string }
+  | { type: "memory"; chromaFacts: ChromaFact[] }
+  | { type: "skip" };
+
+const SKIP_EVENTS = new Set([
+  "skill",
+  "search_start",
+  "search_results",
+  "web_start",
+  "web_done",
+  "image_start",
+  "image_ready",
+  "image_urls",
+]);
+
+export function splitSseBuffer(buffer: string): { events: string[]; remainder: string } {
+  const chunks = buffer.split("\n\n");
+  return {
+    events: chunks.slice(0, -1),
+    remainder: chunks[chunks.length - 1] ?? "",
+  };
+}
+
+export function parseChatSseEvent(rawEvent: string): ChatSseEvent | null {
+  const eventType = rawEvent
+    .split("\n")
+    .find((line) => line.startsWith("event: "))
+    ?.slice(7)
+    .trim();
+  const dataLines = rawEvent
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice(6));
+
+  if (!dataLines.length) return null;
+
+  const payload = dataLines.join("\n");
+  if (payload === "[DONE]") return { type: "done" };
+
+  if (eventType === "rewrite") {
+    try {
+      const parsed = JSON.parse(payload) as { text?: string };
+      return { type: "rewrite", text: parsed.text ?? "" };
+    } catch {
+      return null;
+    }
+  }
+
+  if (eventType === "memory") {
+    try {
+      const parsed = JSON.parse(payload) as { chroma_facts?: ChromaFact[] };
+      return { type: "memory", chromaFacts: parsed.chroma_facts ?? [] };
+    } catch {
+      return null;
+    }
+  }
+
+  if (eventType && SKIP_EVENTS.has(eventType)) {
+    return { type: "skip" };
+  }
+
+  return { type: "text", chunk: payload };
+}

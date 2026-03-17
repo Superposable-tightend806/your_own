@@ -17,7 +17,7 @@ import {
   View,
 } from "react-native";
 import Markdown from "react-native-markdown-display";
-import { getBackendUrl } from "@/lib/api";
+import { buildChatImageSource } from "@/lib/chatImages";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -216,20 +216,19 @@ function GeneratingShimmer({ prompt }: { prompt: string }) {
 }
 
 function GeneratedImageCard({ image, backendUrl }: { image: GeneratedImage; backendUrl: string }) {
-  const src = image.path.startsWith("http") ? image.path : `${backendUrl}${image.path}`;
+  const source = buildChatImageSource(image.path, backendUrl);
   const modelName = image.model.split("/").pop() ?? image.model;
   const promptPreview = image.prompt.length > 60 ? image.prompt.slice(0, 57) + "..." : image.prompt;
 
   const screenW = Dimensions.get("window").width;
   const imgWidth = Math.min(screenW * 0.7, 300);
 
+  if (!source) return null;
+
   return (
     <View style={[s.imageCard, { width: imgWidth }]}>
       <Image
-        source={{
-          uri: src,
-          headers: { "ngrok-skip-browser-warning": "true" },
-        }}
+        source={source as any}
         style={{ width: imgWidth, height: imgWidth, backgroundColor: "rgba(255,255,255,0.03)" }}
         resizeMode="cover"
       />
@@ -312,6 +311,7 @@ interface MessageContentProps {
   role: "user" | "assistant";
   isStreaming?: boolean;
   showCursor?: boolean;
+  backendUrl: string;
 }
 
 const MessageContent = React.memo(function MessageContent({
@@ -319,13 +319,8 @@ const MessageContent = React.memo(function MessageContent({
   role,
   isStreaming = false,
   showCursor = false,
+  backendUrl,
 }: MessageContentProps) {
-  const [backendUrl, setBackendUrl] = useState("");
-
-  useEffect(() => {
-    getBackendUrl().then(setBackendUrl);
-  }, []);
-
   const parts = useMemo(
     () => role === "assistant" ? parseContent(content, isStreaming) : [],
     [content, role, isStreaming],

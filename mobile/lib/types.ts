@@ -11,6 +11,17 @@ export interface Message {
   pairId?: string;
 }
 
+export type AttachmentStatus = "uploading" | "uploaded" | "failed";
+
+export interface DraftAttachment {
+  id: string;
+  localUri: string;
+  mimeType: string;
+  fileName: string;
+  serverUrl?: string;
+  status: AttachmentStatus;
+}
+
 export interface ChromaFact {
   id: string;
   text: string;
