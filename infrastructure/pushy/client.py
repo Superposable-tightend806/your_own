@@ -55,17 +55,27 @@ class PushyClient:
         }
 
         url = f"{_PUSHY_API_URL}?api_key={self.api_key}"
+        logger.info("[pushy] sending to device_token=%s...%s", self.device_token[:6], self.device_token[-4:])
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 200:
-                        logger.info("[pushy] notification sent: %r", title)
-                        return True
                     text = await resp.text()
-                    logger.warning("[pushy] send failed status=%d body=%s", resp.status, text[:200])
+                    if resp.status == 200:
+                        logger.info("[pushy] notification sent OK: %r", title)
+                        return True
+                    logger.warning(
+                        "[pushy] send FAILED status=%d body=%s title=%r",
+                        resp.status, text[:300], title,
+                    )
                     return False
+        except aiohttp.ClientConnectorError as exc:
+            logger.error("[pushy] connection error (network?): %s", exc)
+            return False
+        except aiohttp.ServerTimeoutError as exc:
+            logger.error("[pushy] timeout after 10s: %s", exc)
+            return False
         except Exception as exc:
-            logger.error("[pushy] send error: %s", exc)
+            logger.error("[pushy] unexpected send error: %s", exc)
             return False
 
 

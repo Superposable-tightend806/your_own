@@ -243,12 +243,26 @@ async def run_due(account_id: str) -> None:
 
             # Phase 3: send via Pushy
             from infrastructure.pushy.client import get_client
+            from infrastructure.settings_store import load_settings as _ls
+            _s = _ls()
             ai_name = settings.get("ai_name", "") or "AI"
+            _has_api_key = bool(_s.get("pushy_api_key", ""))
+            _has_token = bool(_s.get("pushy_device_token", ""))
+            logger.info(
+                "[scheduled_push] pushy config: api_key=%s device_token=%s",
+                "present" if _has_api_key else "MISSING",
+                "present" if _has_token else "MISSING",
+            )
             client = get_client()
             if client:
-                await client.send(title=ai_name, body=final_message)
+                logger.info("[scheduled_push] sending push notification task_id=%s", task.id)
+                push_ok = await client.send(title=ai_name, body=final_message)
+                if push_ok:
+                    logger.info("[scheduled_push] push delivered OK task_id=%s", task.id)
+                else:
+                    logger.warning("[scheduled_push] push delivery FAILED task_id=%s (see [pushy] logs above)", task.id)
             else:
-                logger.warning("[scheduled_push] Pushy not configured, can't send task_id=%s", task.id)
+                logger.warning("[scheduled_push] Pushy not configured (api_key or device_token missing), skipping push task_id=%s", task.id)
 
             # Phase 4: persist in chat history
             await _save_push_to_db(db, account_id, final_message)

@@ -261,14 +261,16 @@ async def _consolidate_identity(
             next_sec = content.find("\n## ", idx + len(header))
             section_content = content[idx:next_sec] if next_sec != -1 else content[idx:]
 
-        sys_prompt = get_prompt(
+        from infrastructure.llm.prompt_loader import load_prompt
+
+        sys_prompt = load_prompt(
             f"{_PROMPTS_DIR}/rotator_consolidate.md",
             lang=lang, section="system",
-            ai_name=ai_name,
-        )
-        user_prompt = get_prompt(
+        ).format(ai_name=ai_name)
+        user_prompt = load_prompt(
             f"{_PROMPTS_DIR}/rotator_consolidate.md",
             lang=lang, section="user",
+        ).format(
             ai_name=ai_name,
             section=section,
             count=count,
