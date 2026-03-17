@@ -76,6 +76,33 @@ _dbg("MODULE_LOADED")
 router = APIRouter(prefix="/api", tags=["chat"], dependencies=[Depends(require_auth)])
 
 
+def _save_upload(payload: bytes, content_type: str) -> str:
+    """Save raw image bytes to user_uploads/ and return the relative URL."""
+    ext = "jpg"
+    ct = content_type.lower()
+    if "png" in ct:
+        ext = "png"
+    elif "webp" in ct:
+        ext = "webp"
+    elif "gif" in ct:
+        ext = "gif"
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    (_USER_UPLOADS_DIR / filename).write_bytes(payload)
+    return f"/api/user_uploads/{filename}"
+
+
+@router.post("/upload")
+async def upload_image(
+    image: UploadFile = File(...),
+):
+    """Upload a single image and return its server URL."""
+    payload = await image.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Empty file")
+    url = _save_upload(payload, image.content_type or "image/jpeg")
+    return {"url": url}
+
+
 async def _post_analyze_background(
     account_id: str,
     recent_pairs: list[dict],
@@ -197,6 +224,7 @@ async def chat(
     history_pairs:      Optional[str] = Form(None),
     memory_cutoff_days: Optional[str] = Form(None),
     system_prompt:  Optional[str] = Form(None),
+    image_urls_json: Optional[str] = Form(None, alias="image_urls"),
     image:          Optional[UploadFile] = File(None),
     images:         Optional[list[UploadFile]] = File(None),
     db:             AsyncSession = Depends(get_db),
@@ -249,35 +277,50 @@ async def chat(
         settings.MEMORY_CUTOFF_DAYS_MAX,
     )
 
+    # --- resolve images (pre-uploaded URLs or legacy FormData uploads) ---
+    upload_urls: list[str] = []
+    images_from_urls = False
+
+    if image_urls_json:
+        try:
+            parsed_urls = json.loads(image_urls_json)
+            if isinstance(parsed_urls, list):
+                upload_urls = [u for u in parsed_urls if isinstance(u, str)]
+                images_from_urls = True
+        except json.JSONDecodeError:
+            pass
+
     uploaded_images: list[UploadFile] = []
-    if images:
-        uploaded_images.extend([item for item in images if item and item.filename])
-    if image and image.filename:
-        uploaded_images.append(image)
-    if len(uploaded_images) > MAX_CHAT_IMAGES:
-        raise HTTPException(status_code=400, detail=f"Up to {MAX_CHAT_IMAGES} images allowed per message.")
+    if not images_from_urls:
+        if images:
+            uploaded_images.extend([item for item in images if item and item.filename])
+        if image and image.filename:
+            uploaded_images.append(image)
+        if len(uploaded_images) > MAX_CHAT_IMAGES:
+            raise HTTPException(status_code=400, detail=f"Up to {MAX_CHAT_IMAGES} images allowed per message.")
 
     image_items: list[tuple[bytes, str]] = []
-    for uploaded in uploaded_images:
-        payload = await uploaded.read()
-        if payload:
-            image_items.append((payload, uploaded.content_type or "image/jpeg"))
 
-    upload_urls: list[str] = []
-    for payload, content_type in image_items:
-        ext = "jpg"
-        if content_type:
-            ct = content_type.lower()
-            if "png" in ct:
-                ext = "png"
-            elif "webp" in ct:
-                ext = "webp"
-            elif "gif" in ct:
-                ext = "gif"
-        filename = f"{uuid.uuid4().hex}.{ext}"
-        filepath = _USER_UPLOADS_DIR / filename
-        filepath.write_bytes(payload)
-        upload_urls.append(f"/api/user_uploads/{filename}")
+    if images_from_urls:
+        for rel_url in upload_urls:
+            fname = rel_url.rsplit("/", 1)[-1]
+            fpath = _USER_UPLOADS_DIR / fname
+            if fpath.is_file():
+                ct = "image/jpeg"
+                if fname.endswith(".png"):
+                    ct = "image/png"
+                elif fname.endswith(".webp"):
+                    ct = "image/webp"
+                elif fname.endswith(".gif"):
+                    ct = "image/gif"
+                image_items.append((fpath.read_bytes(), ct))
+    else:
+        for uploaded in uploaded_images:
+            payload = await uploaded.read()
+            if payload:
+                image_items.append((payload, uploaded.content_type or "image/jpeg"))
+        for payload, content_type in image_items:
+            upload_urls.append(_save_upload(payload, content_type))
 
     client = LLMClient(
         api_key=api_key,
@@ -599,7 +642,7 @@ async def chat(
     )
 
     async def event_stream():
-        if upload_urls:
+        if upload_urls and not images_from_urls:
             yield "event: image_urls\n"
             yield f"data: {json.dumps({'urls': upload_urls})}\n\n"
 

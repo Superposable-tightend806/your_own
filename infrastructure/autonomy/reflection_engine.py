@@ -282,13 +282,6 @@ async def _handle_command(
 
     elif cmd == "SEND_MESSAGE":
         msg_text = arg.strip()
-        from infrastructure.autonomy.scheduled_push import validate_push
-        action, final_text = await validate_push(api_key, account_id, msg_text)
-        logger.info("[reflection:%s] SEND_MESSAGE validate: %s", account_id, action)
-        if action == "cancel":
-            return None
-        if action == "rewrite":
-            msg_text = final_text
         from infrastructure.pushy.client import get_client
         client = get_client()
         if client:

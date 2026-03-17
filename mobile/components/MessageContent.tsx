@@ -4,9 +4,10 @@
  *
  * Mirrors the web frontend's MarkdownMessage parsing logic.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   Image,
   Platform,
@@ -285,6 +286,25 @@ const mdStyles = StyleSheet.create({
   hr: { backgroundColor: "rgba(255,255,255,0.15)", height: 1, marginVertical: 12 },
 });
 
+// ── Blinking Caret ───────────────────────────────────────────────────────────
+
+function BlinkingCaret() {
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+
+  return <Animated.Text style={[s.cursor, { opacity }]}>|</Animated.Text>;
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 interface MessageContentProps {
@@ -316,12 +336,7 @@ const MessageContent = React.memo(function MessageContent({
   }
 
   if (!content && isStreaming) {
-    return (
-      <View style={s.streamingPlaceholder}>
-        <Text style={s.assistantText}>…</Text>
-        {showCursor && <Text style={s.cursor}>▋</Text>}
-      </View>
-    );
+    return showCursor ? <BlinkingCaret /> : null;
   }
 
   return (
@@ -344,7 +359,7 @@ const MessageContent = React.memo(function MessageContent({
             return null;
         }
       })}
-      {showCursor && <Text style={s.cursor}>▋</Text>}
+      {showCursor && <BlinkingCaret />}
     </View>
   );
 });
@@ -356,8 +371,7 @@ export default MessageContent;
 const s = StyleSheet.create({
   userText: { color: "rgba(255,255,255,0.9)", fontSize: 15, lineHeight: 22, fontWeight: "300" },
   assistantText: { color: "rgba(255,255,255,0.8)", fontSize: 15, lineHeight: 22, fontWeight: "300" },
-  streamingPlaceholder: { flexDirection: "row" as const, alignItems: "center", gap: 4 },
-  cursor: { color: "rgba(255,255,255,0.6)", fontSize: 14 },
+  cursor: { color: "rgba(255,255,255,0.5)", fontSize: 16 },
 
   // Skill badges
   badgeRow: {

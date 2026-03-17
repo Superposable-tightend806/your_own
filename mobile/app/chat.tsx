@@ -44,6 +44,8 @@ interface ImageAttachment {
   uri: string;
   mimeType: string;
   fileName: string;
+  serverUrl?: string;
+  uploading?: boolean;
 }
 
 function makeId(prefix: string) {
@@ -72,6 +74,19 @@ function pairToMessages(pair: HistoryPair, baseUrl: string): Message[] {
 
 // ── Message bubble ───────────────────────────────────────────────────────────
 
+function AttachedImage({ uri }: { uri: string }) {
+  const [failed, setFailed] = React.useState(false);
+  if (failed) return null;
+  return (
+    <Image
+      source={{ uri }}
+      style={styles.attachedImage}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 const MessageBubble = React.memo(function MessageBubble({
   msg,
   isStreamingLast,
@@ -81,7 +96,8 @@ const MessageBubble = React.memo(function MessageBubble({
 }) {
   const [memoryExpanded, setMemoryExpanded] = React.useState(false);
   const isUser = msg.role === "user";
-  const imageUrls = msg.imageUrls ?? (msg.imageUrl ? [msg.imageUrl] : []);
+  const imageUrls = (msg.imageUrls ?? (msg.imageUrl ? [msg.imageUrl] : []))
+    .filter((u) => u && (u.startsWith("http") || u.startsWith("file://") || u.startsWith("content://")));
   const hasMemory = !isUser && (msg.chromaFacts?.length ?? 0) > 0;
   return (
     <View style={[styles.bubbleWrap, isUser ? styles.bubbleWrapRight : styles.bubbleWrapLeft]}>
@@ -89,7 +105,7 @@ const MessageBubble = React.memo(function MessageBubble({
         {imageUrls.length > 0 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.attachedImages}>
             {imageUrls.map((uri, i) => (
-              <Image key={i} source={{ uri }} style={styles.attachedImage} resizeMode="cover" />
+              <AttachedImage key={`${uri}-${i}`} uri={uri} />
             ))}
           </ScrollView>
         )}
@@ -179,6 +195,7 @@ export default function ChatScreen() {
   const chunkBufRef = useRef("");
   const rafRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const flatListRef = useRef<FlatList<Message>>(null);
+  const backendUrlRef = useRef("");
 
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
 
@@ -190,6 +207,7 @@ export default function ChatScreen() {
   // ── Load initial data ────────────────────────────────────────────────────
 
   useEffect(() => {
+    getBackendUrl().then(u => { backendUrlRef.current = u.replace(/\/$/, ""); }).catch(() => {});
     void loadHistory(null);
     loadSettings()
       .then(s => {
@@ -221,9 +239,31 @@ export default function ChatScreen() {
       uri: asset.uri,
       mimeType: asset.mimeType ?? "image/jpeg",
       fileName: asset.fileName ?? `image_${i}.jpg`,
+      uploading: true,
     }));
 
+    const startIdx = attachments.length;
     setAttachments(prev => [...prev, ...newAttachments].slice(0, MAX_IMAGES));
+
+    for (let i = 0; i < newAttachments.length; i++) {
+      const att = newAttachments[i];
+      const idx = startIdx + i;
+      const form = new FormData();
+      form.append("image", { uri: att.uri, name: att.fileName, type: att.mimeType } as any);
+      try {
+        const res = await apiFetch("/api/upload", { method: "POST", body: form });
+        if (res.ok) {
+          const { url } = await res.json() as { url: string };
+          setAttachments(prev =>
+            prev.map((a, j) => (j === idx ? { ...a, serverUrl: url, uploading: false } : a)),
+          );
+        } else {
+          setAttachments(prev => prev.filter((_, j) => j !== idx));
+        }
+      } catch {
+        setAttachments(prev => prev.filter((_, j) => j !== idx));
+      }
+    }
   };
 
   const removeAttachment = (index: number) => {
@@ -289,54 +329,43 @@ export default function ChatScreen() {
 
   const handleSend = async () => {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || streaming) return;
+    const ready = attachments.filter(a => !a.uploading && a.serverUrl);
+    if ((!text && ready.length === 0) || streaming) return;
 
-    const previewUris = attachments.map(a => a.uri);
+    const baseUrl = await getBackendUrl();
+    const prefix = baseUrl.replace(/\/$/, "");
+    const serverUrls = ready.map(a => a.serverUrl!);
+    const fullImageUrls = serverUrls.map(u => (u.startsWith("http") ? u : `${prefix}${u}`));
+
     const userMsg: Message = {
       id: makeId("user"),
       role: "user",
       content: text,
-      imageUrls: previewUris.length > 0 ? previewUris : undefined,
+      imageUrls: fullImageUrls.length > 0 ? fullImageUrls : undefined,
     };
     setMessages(prev => [...prev, userMsg, { id: makeId("assistant"), role: "assistant", content: "" }]);
     setInput("");
-    const sentAttachments = [...attachments];
     setAttachments([]);
     setStreaming(true);
 
     try {
       abortRef.current = new AbortController();
-      const hasImages = sentAttachments.length > 0;
       const msgPayload = JSON.stringify([...messages, userMsg].map(m => ({ role: m.role, content: m.content })));
 
-      let response: Response;
-      const baseUrl = await getBackendUrl();
-
-      if (hasImages) {
-        const form = new FormData();
-        form.append("messages", msgPayload);
-        form.append("web_search", "false");
-        form.append("account_id", "default");
-        for (const att of sentAttachments) {
-          form.append("images", { uri: att.uri, name: att.fileName, type: att.mimeType } as any);
-        }
-        response = await apiFetchStreaming("/api/chat", {
-          method: "POST",
-          body: form,
-          signal: abortRef.current.signal,
-        });
-      } else {
-        const params = new URLSearchParams();
-        params.append("messages", msgPayload);
-        params.append("web_search", "false");
-        params.append("account_id", "default");
-        response = await apiFetchStreaming("/api/chat", {
-          method: "POST",
-          body: params.toString(),
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          signal: abortRef.current.signal,
-        });
+      const params = new URLSearchParams();
+      params.append("messages", msgPayload);
+      params.append("web_search", "false");
+      params.append("account_id", "default");
+      if (serverUrls.length > 0) {
+        params.append("image_urls", JSON.stringify(serverUrls));
       }
+
+      const response = await apiFetchStreaming("/api/chat", {
+        method: "POST",
+        body: params.toString(),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: abortRef.current.signal,
+      });
 
       if (!response.ok) {
         throw new Error(response.status === 401 ? "Auth failed — reconnect in Settings" : `HTTP ${response.status}`);
@@ -345,22 +374,8 @@ export default function ChatScreen() {
       const SKIP_EVENTS = new Set([
         "skill", "search_start", "search_results",
         "web_start", "web_done", "image_start", "image_ready",
+        "image_urls",
       ]);
-
-      const parseSseText = (raw: string): string => {
-        let acc = "";
-        for (const event of raw.split("\n\n")) {
-          const et = event.split("\n").find(l => l.startsWith("event: "))?.slice(7).trim();
-          const dl = event.split("\n").filter(l => l.startsWith("data: ")).map(l => l.slice(6));
-          if (!dl.length) continue;
-          const d = dl.join("\n");
-          if (d === "[DONE]") break;
-          if (et === "rewrite") { try { acc = JSON.parse(d).text; } catch {} continue; }
-          if (et && SKIP_EVENTS.has(et)) continue;
-          acc += d;
-        }
-        return acc;
-      };
 
       if (response.body) {
         const reader = response.body.getReader();
@@ -397,25 +412,6 @@ export default function ChatScreen() {
               continue;
             }
 
-            if (eventType === "image_urls") {
-              try {
-                const { urls } = JSON.parse(chunk) as { urls?: string[] };
-                if (urls?.length) {
-                  const prefix = baseUrl.replace(/\/$/, "");
-                  const fullUrls = urls.map((u) => (u.startsWith("http") ? u : `${prefix}${u}`));
-                  setMessages(prev => {
-                    const updated = [...prev];
-                    const userIdx = updated.length - 2;
-                    if (userIdx >= 0 && updated[userIdx]?.role === "user") {
-                      updated[userIdx] = { ...updated[userIdx], imageUrls: fullUrls };
-                    }
-                    return updated;
-                  });
-                }
-              } catch { /* ignore */ }
-              continue;
-            }
-
             if (eventType === "memory") {
               try {
                 const { chroma_facts } = JSON.parse(chunk) as { chroma_facts?: Array<{ id: string; text: string; category: string; impressive: number; time_label: string }> };
@@ -440,63 +436,6 @@ export default function ChatScreen() {
           }
         }
         flushNow();
-      } else {
-        // Emulate streaming: reveal text progressively so it doesn't flash in
-        const fullText = await response.text();
-        for (const event of fullText.split("\n\n")) {
-          const et = event.split("\n").find(l => l.startsWith("event: "))?.slice(7).trim();
-          const dl = event.split("\n").filter(l => l.startsWith("data: ")).map(l => l.slice(6));
-          if (!dl.length) continue;
-          const d = dl.join("\n");
-          if (et === "image_urls") {
-            try {
-              const { urls } = JSON.parse(d) as { urls?: string[] };
-              if (urls?.length) {
-                const prefix = baseUrl.replace(/\/$/, "");
-                const fullUrls = urls.map((u) => (u.startsWith("http") ? u : `${prefix}${u}`));
-                setMessages(prev => {
-                  const updated = [...prev];
-                  const userIdx = updated.length - 2;
-                  if (userIdx >= 0 && updated[userIdx]?.role === "user") {
-                    updated[userIdx] = { ...updated[userIdx], imageUrls: fullUrls };
-                  }
-                  return updated;
-                });
-              }
-            } catch { /* ignore */ }
-          } else if (et === "memory") {
-            try {
-              const { chroma_facts } = JSON.parse(d) as { chroma_facts?: Array<{ id: string; text: string; category: string; impressive: number; time_label: string }> };
-              if (chroma_facts?.length) {
-                setMessages(prev => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last?.role === "assistant") {
-                    updated[updated.length - 1] = { ...last, chromaFacts: chroma_facts };
-                  }
-                  return updated;
-                });
-              }
-            } catch { /* ignore */ }
-          }
-        }
-        const content = parseSseText(fullText);
-        for (let i = 0; i < content.length; i += EMULATED_CHUNK) {
-          const partial = content.slice(0, i + EMULATED_CHUNK);
-          setMessages(prev => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content: partial };
-            return updated;
-          });
-          await new Promise(r => setTimeout(r, EMULATED_DELAY));
-        }
-        setMessages(prev => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last?.role === "assistant") updated[updated.length - 1] = { ...last, content };
-          return updated;
-        });
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;
@@ -572,7 +511,12 @@ export default function ChatScreen() {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewScroll}>
               {attachments.map((att, i) => (
                 <View key={i} style={styles.previewWrap}>
-                  <Image source={{ uri: att.uri }} style={styles.previewThumb} resizeMode="cover" />
+                  <Image source={{ uri: att.serverUrl ? `${backendUrlRef.current}${att.serverUrl}` : att.uri }} style={styles.previewThumb} resizeMode="cover" />
+                  {att.uploading && (
+                    <View style={styles.previewUploading}>
+                      <ActivityIndicator size="small" color="#fff" />
+                    </View>
+                  )}
                   <TouchableOpacity style={styles.previewRemove} onPress={() => removeAttachment(i)}>
                     <Text style={styles.previewRemoveText}>×</Text>
                   </TouchableOpacity>
@@ -605,7 +549,7 @@ export default function ChatScreen() {
           <TouchableOpacity
             style={styles.sendBtn}
             onPress={streaming ? handleStop : handleSend}
-            disabled={!streaming && !input.trim() && attachments.length === 0}
+            disabled={!streaming && (!input.trim() && attachments.filter(a => !a.uploading).length === 0 || attachments.some(a => a.uploading))}
           >
             <Text style={styles.sendBtnText}>{streaming ? "stop" : "send"}</Text>
           </TouchableOpacity>
@@ -699,6 +643,13 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   previewRemoveText: { color: "#fff", fontSize: 11, lineHeight: 14 },
+  previewUploading: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 2,
+  },
 
   inputRow: {
     flexDirection: "row",
