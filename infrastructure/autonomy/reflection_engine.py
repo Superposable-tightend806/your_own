@@ -77,7 +77,7 @@ MAX_EXTEND_ASKS = 3
 _CMD_RE = re.compile(
     r"\[(?P<cmd>SEARCH_MEMORIES|SEARCH_NOTES|SEARCH_DIALOGUE|WEB_SEARCH"
     r"|WRITE_NOTE|WRITE_IDENTITY|SEND_MESSAGE|SCHEDULE_MESSAGE"
-    r"|CANCEL_MESSAGE|RESCHEDULE_MESSAGE"
+    r"|CANCEL_MESSAGE|RESCHEDULE_MESSAGE|REWRITE_MESSAGE"
     r"|EXTEND|SLEEP|RECALL|WRITE|HISTORY):\s*(?P<arg>.*?)\]",
     re.IGNORECASE | re.DOTALL,
 )
@@ -372,6 +372,26 @@ async def _handle_command(
                 logger.warning("[reflection] bad RESCHEDULE_MESSAGE: %r", arg)
         return None
 
+    elif cmd == "REWRITE_MESSAGE":
+        if "|" in arg:
+            ts_str, new_text = arg.split("|", 1)
+            try:
+                from infrastructure.settings_store import local_to_utc
+                from infrastructure.autonomy.task_queue import rewrite_task
+                scheduled_at = local_to_utc(
+                    datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M")
+                )
+                found = await rewrite_task(db, account_id, scheduled_at, new_text.strip())
+                logger.info("[reflection:%s] REWRITE_MESSAGE %s found=%s", account_id, ts_str.strip(), found)
+                if found:
+                    _preview = new_text.strip()[:60] + ("…" if len(new_text.strip()) > 60 else "")
+                    wb.append(account_id, f"Переписал сообщение на {ts_str.strip()}: «{_preview}»")
+                else:
+                    return f"Сообщение на {ts_str.strip()} не найдено (уже отправлено или не существует)."
+            except ValueError:
+                logger.warning("[reflection] bad REWRITE_MESSAGE: %r", arg)
+        return None
+
     return None
 
 
@@ -475,9 +495,10 @@ def _build_pending_tasks_block(lang: str, tasks: list) -> str:
     else:
         header = "### Your scheduled messages:"
         footer = (
-            "You can cancel or reschedule any pending message right now:\n"
-            "[CANCEL_MESSAGE: YYYY-MM-DD HH:MM] — cancel the message at this time\n"
-            "[RESCHEDULE_MESSAGE: YYYY-MM-DD HH:MM -> YYYY-MM-DD HH:MM] — move to a different time"
+            "You can cancel, reschedule or rewrite any pending message right now:\n"
+            "[CANCEL_MESSAGE: YYYY-MM-DD HH:MM]\n"
+            "[RESCHEDULE_MESSAGE: YYYY-MM-DD HH:MM -> YYYY-MM-DD HH:MM]\n"
+            "[REWRITE_MESSAGE: YYYY-MM-DD HH:MM | new text]"
         )
     return f"{header}\n{tasks_list}\n{footer}\n\n"
 

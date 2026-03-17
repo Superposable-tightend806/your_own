@@ -13,10 +13,21 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 
 from infrastructure.autonomy import identity_memory as identity
 from infrastructure.autonomy import workbench as wb
+from infrastructure.autonomy.cmd_parser import (
+    CancelMessage,
+    ParsedCommand,
+    RescheduleMessage,
+    RewriteMessage,
+    ScheduleMessage,
+    SendMessage,
+    parse_commands,
+    strip_commands,
+)
 from infrastructure.llm.prompt_loader import get_prompt
 from infrastructure.settings_store import now_local
 
@@ -25,11 +36,6 @@ from infrastructure.logging.logger import setup_logger
 logger = setup_logger("autonomy.post_analyzer")
 
 _PROMPTS = "infrastructure/autonomy/prompts/post_analyzer.md"
-
-_SCHEDULE_RE = re.compile(
-    r"\[SCHEDULE[_ ]MESSAGE:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})\s*\|\s*(.*?)\]",
-    re.IGNORECASE | re.DOTALL,
-)
 
 
 def _get_ai_name() -> str:
@@ -155,6 +161,115 @@ async def _build_pending_pushes_block(account_id: str) -> str:
     return "\n".join(lines)
 
 
+async def _execute_command(cmd: ParsedCommand, *, account_id: str, lang: str) -> None:
+    """Execute one parsed autonomy command."""
+    from infrastructure.database.engine import get_db_session
+    from infrastructure.autonomy.task_queue import (
+        cancel_duplicate_scheduled,
+        cancel_task_by_time,
+        create_task,
+        reschedule_task,
+    )
+    from infrastructure.database.models.autonomy_task import TriggerType
+    from infrastructure.settings_store import local_to_utc
+
+    _ru = lang == "ru"
+
+    if isinstance(cmd, SendMessage):
+        try:
+            from infrastructure.pushy.client import get_client
+            client = get_client()
+            if client:
+                await client.send(title=_get_ai_name(), body=cmd.text)
+                logger.info("[post_analyzer:%s] sent push: %s", account_id, cmd.text[:80])
+            else:
+                logger.warning("[post_analyzer] SEND_MESSAGE: Pushy not configured")
+            from infrastructure.memory.live_store import build_canonical_row
+            from infrastructure.database.repositories.message_repo import MessageRepository
+            row = build_canonical_row(
+                pair_id=uuid.uuid4(), account_id=account_id,
+                role="assistant", text=cmd.text, source="push",
+            )
+            async with get_db_session() as db:
+                await MessageRepository(db).bulk_save([row])
+            _pfx = "Написал ей" if _ru else "Sent message"
+            _preview = cmd.text[:60] + ("…" if len(cmd.text) > 60 else "")
+            wb.append(account_id, f"{_pfx}: «{_preview}»")
+        except Exception as exc:
+            logger.warning("[post_analyzer] SEND_MESSAGE failed: %s", exc)
+
+    elif isinstance(cmd, ScheduleMessage):
+        try:
+            scheduled_at = local_to_utc(datetime.strptime(cmd.ts_str, "%Y-%m-%d %H:%M"))
+            async with get_db_session() as db:
+                await cancel_duplicate_scheduled(db, account_id, scheduled_at, "postanalysis")
+                payload = json.dumps({"message": cmd.text, "source": "postanalysis"})
+                await create_task(
+                    db,
+                    account_id=account_id,
+                    trigger_type=TriggerType.TIME,
+                    payload=payload,
+                    scheduled_at=scheduled_at,
+                )
+            logger.info("[post_analyzer:%s] scheduled message at %s", account_id, cmd.ts_str)
+            _pfx = "Запланировал сообщение на" if _ru else "Scheduled message for"
+            _preview = cmd.text[:60] + ("…" if len(cmd.text) > 60 else "")
+            wb.append(account_id, f"{_pfx} {cmd.ts_str}: «{_preview}»")
+        except ValueError:
+            logger.warning("[post_analyzer] bad SCHEDULE_MESSAGE ts: %r", cmd.ts_str)
+        except Exception as exc:
+            logger.warning("[post_analyzer] SCHEDULE_MESSAGE failed: %s", exc)
+
+    elif isinstance(cmd, CancelMessage):
+        try:
+            scheduled_at = local_to_utc(datetime.strptime(cmd.ts_str, "%Y-%m-%d %H:%M"))
+            async with get_db_session() as db:
+                found = await cancel_task_by_time(db, account_id, scheduled_at)
+            logger.info("[post_analyzer:%s] CANCEL_MESSAGE %s found=%s", account_id, cmd.ts_str, found)
+            if found:
+                _pfx = "Отменил сообщение на" if _ru else "Cancelled message for"
+                wb.append(account_id, f"{_pfx} {cmd.ts_str}")
+        except ValueError:
+            logger.warning("[post_analyzer] bad CANCEL_MESSAGE ts: %r", cmd.ts_str)
+        except Exception as exc:
+            logger.warning("[post_analyzer] CANCEL_MESSAGE failed: %s", exc)
+
+    elif isinstance(cmd, RescheduleMessage):
+        try:
+            old_utc = local_to_utc(datetime.strptime(cmd.old_ts_str, "%Y-%m-%d %H:%M"))
+            new_utc = local_to_utc(datetime.strptime(cmd.new_ts_str, "%Y-%m-%d %H:%M"))
+            async with get_db_session() as db:
+                found = await reschedule_task(db, account_id, old_utc, new_utc)
+            logger.info(
+                "[post_analyzer:%s] RESCHEDULE_MESSAGE %s -> %s found=%s",
+                account_id, cmd.old_ts_str, cmd.new_ts_str, found,
+            )
+            if found:
+                _pfx = "Перенёс сообщение с" if _ru else "Rescheduled message from"
+                _mid = "на" if _ru else "to"
+                wb.append(account_id, f"{_pfx} {cmd.old_ts_str} {_mid} {cmd.new_ts_str}")
+        except ValueError:
+            logger.warning("[post_analyzer] bad RESCHEDULE_MESSAGE: %r -> %r", cmd.old_ts_str, cmd.new_ts_str)
+        except Exception as exc:
+            logger.warning("[post_analyzer] RESCHEDULE_MESSAGE failed: %s", exc)
+
+    elif isinstance(cmd, RewriteMessage):
+        try:
+            from infrastructure.autonomy.task_queue import rewrite_task
+            scheduled_at = local_to_utc(datetime.strptime(cmd.ts_str, "%Y-%m-%d %H:%M"))
+            async with get_db_session() as db:
+                found = await rewrite_task(db, account_id, scheduled_at, cmd.new_text)
+            logger.info("[post_analyzer:%s] REWRITE_MESSAGE %s found=%s", account_id, cmd.ts_str, found)
+            if found:
+                _pfx = "Переписал сообщение на" if _ru else "Rewrote message for"
+                _preview = cmd.new_text[:60] + ("…" if len(cmd.new_text) > 60 else "")
+                wb.append(account_id, f"{_pfx} {cmd.ts_str}: «{_preview}»")
+        except ValueError:
+            logger.warning("[post_analyzer] bad REWRITE_MESSAGE ts: %r", cmd.ts_str)
+        except Exception as exc:
+            logger.warning("[post_analyzer] REWRITE_MESSAGE failed: %s", exc)
+
+
 async def run_post_analysis(
     *,
     account_id: str,
@@ -207,40 +322,11 @@ async def run_post_analysis(
         logger.info("[post_analyzer:%s] SKIP", account_id)
         return
 
-    # Handle SCHEDULE_MESSAGE commands
-    for match in _SCHEDULE_RE.finditer(response):
-        ts_str = match.group(1).strip()
-        message = match.group(2).strip()
-        try:
-            from infrastructure.database.engine import get_db_session
-            from infrastructure.autonomy.task_queue import create_task, cancel_duplicate_scheduled
-            from infrastructure.database.models.autonomy_task import TriggerType
+    commands = parse_commands(response)
+    for cmd in commands:
+        await _execute_command(cmd, account_id=account_id, lang=lang)
 
-            from infrastructure.settings_store import local_to_utc
-            scheduled_at = local_to_utc(
-                datetime.strptime(ts_str, "%Y-%m-%d %H:%M")
-            )
-            async with get_db_session() as db:
-                await cancel_duplicate_scheduled(db, account_id, scheduled_at, "postanalysis")
-                payload = json.dumps({"message": message, "source": "postanalysis"})
-                await create_task(
-                    db,
-                    account_id=account_id,
-                    trigger_type=TriggerType.TIME,
-                    payload=payload,
-                    scheduled_at=scheduled_at,
-                )
-            logger.info("[post_analyzer:%s] scheduled message at %s", account_id, ts_str)
-
-            _pfx = "Запланировал сообщение на" if lang == "ru" else "Scheduled message for"
-            _preview = message[:60] + ("…" if len(message) > 60 else "")
-            wb.append(account_id, f"{_pfx} {ts_str}: «{_preview}»")
-        except ValueError:
-            logger.warning("[post_analyzer] bad SCHEDULE_MESSAGE timestamp: %r", ts_str)
-        except Exception as exc:
-            logger.warning("[post_analyzer] SCHEDULE_MESSAGE failed: %s", exc)
-
-    clean_note = _SCHEDULE_RE.sub("", response).strip()
+    clean_note = strip_commands(response)
     if clean_note:
         wb.append(account_id, clean_note)
         logger.info(

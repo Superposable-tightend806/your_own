@@ -119,6 +119,35 @@ async def reschedule_task(
     return bool(tasks)
 
 
+async def rewrite_task(
+    db: AsyncSession,
+    account_id: str,
+    scheduled_at_utc: datetime,
+    new_text: str,
+) -> bool:
+    """Replace the message payload of a PENDING task. Returns True if found."""
+    result = await db.execute(
+        select(AutonomyTask).where(
+            AutonomyTask.account_id == account_id,
+            AutonomyTask.trigger_type == TriggerType.TIME,
+            AutonomyTask.status == TaskStatus.PENDING,
+            AutonomyTask.scheduled_at == scheduled_at_utc,
+        )
+    )
+    tasks = list(result.scalars().all())
+    for t in tasks:
+        try:
+            import json
+            pd = json.loads(t.payload) if t.payload else {}
+            pd["message"] = new_text
+            t.payload = json.dumps(pd, ensure_ascii=False)
+        except Exception:
+            t.payload = json.dumps({"message": new_text}, ensure_ascii=False)
+    if tasks:
+        await db.commit()
+    return bool(tasks)
+
+
 async def get_due_tasks(db: AsyncSession, account_id: str) -> list[AutonomyTask]:
     """Return PENDING TIME-triggered tasks whose scheduled_at <= now."""
     now = datetime.now(timezone.utc)

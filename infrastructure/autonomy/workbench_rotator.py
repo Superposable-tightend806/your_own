@@ -171,60 +171,22 @@ async def _review_identity(
     resp = raw.strip()
     sections = identity.get_sections(identity.file_lang(account_id))
 
-    rewrite_re = re.compile(
-        r"^(?:ПЕРЕПИСАТЬ|REWRITE):\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+)$",
-        re.DOTALL,
+    # Format: ОБНОВИТЬ: раздел  (RU)  /  UPDATE: section  (EN)
+    # followed by  ---\n- point\n---
+    update_re = re.compile(
+        r"(?:ОБНОВИТЬ|UPDATE):\s*(.+?)\s*\n-{3,}\s*\n(.*?)\n-{3,}",
+        re.DOTALL | re.IGNORECASE,
     )
-    rewrite_m = rewrite_re.match(resp)
-    if rewrite_m:
-        section = rewrite_m.group(1).strip()
-        new_text = rewrite_m.group(2).strip()
-        reason = rewrite_m.group(3).strip()
-        logger.info("[rotator:%s] identity rewrite request: %s — %s", account_id, section, reason[:80])
-
-        from infrastructure.autonomy.task_queue import create_task
-        from infrastructure.database.engine import get_db_session
-        from infrastructure.database.models.autonomy_task import TriggerType
-
-        task_text = (
-            f"Rewrite pillar «{section}» in identity.md.\n"
-            f"Reason: {reason}\n\n--- New text ---\n{new_text}\n--- End ---"
-        )
-        async with get_db_session() as db:
-            await create_task(
-                db=db,
-                account_id=account_id,
-                message=task_text,
-                trigger=TriggerType.SYSTEM,
-                source="rotation",
-            )
-
-        try:
-            from infrastructure.pushy.client import get_client
-            client = get_client()
-            ai_name = _get_ai_name()
-            if client:
-                await client.send(
-                    title=f"{ai_name} — rewrite «{section[:30]}»",
-                    body=reason[:180],
-                )
-        except Exception as exc:
-            logger.warning("[rotator] push for identity rewrite failed: %s", exc)
-
-        return True
-
-    # Simple append: "Section: text"
-    for line in resp.splitlines():
-        line = line.strip()
-        if not line or ":" not in line:
-            continue
-        section_name, _, text = line.partition(":")
-        section_name = section_name.strip()
-        text = text.strip()
-        if section_name in sections and len(text) > 10:
-            identity.append(account_id, section_name, text)
-            logger.info("[rotator:%s] identity: added to «%s»", account_id, section_name)
+    update_m = update_re.search(resp)
+    if update_m:
+        section = update_m.group(1).strip()
+        new_body = update_m.group(2).strip()
+        lines = [ln.strip() for ln in new_body.splitlines() if ln.strip().startswith("- ")]
+        if lines and section in sections:
+            identity.replace_section(account_id, section, "\n".join(lines))
+            logger.info("[rotator:%s] identity: updated «%s» (%d points)", account_id, section, len(lines))
             return True
+        logger.warning("[rotator:%s] UPDATE for unknown section or no bullets: %r", account_id, section)
 
     return False
 
