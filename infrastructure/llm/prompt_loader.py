@@ -63,7 +63,7 @@ def _extract_subsection(block: str, subsection: str) -> str:
     """Return the block between ### {subsection} and the next ### heading."""
     pattern = re.compile(
         rf"^###\s+{re.escape(subsection)}\s*\n(.*?)(?=^###\s+|\Z)",
-        re.MULTILINE | re.DOTALL,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
     )
     m = pattern.search(block)
     if not m:
