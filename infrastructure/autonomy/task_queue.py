@@ -61,14 +61,14 @@ async def get_recent_tasks(
     account_id: str,
     hours: int = 12,
 ) -> list[AutonomyTask]:
-    """Return PENDING and DONE TIME tasks scheduled within the last N hours."""
+    """Return PENDING, DONE and CANCELLED TIME tasks scheduled within the last N hours."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     result = await db.execute(
         select(AutonomyTask).where(
             AutonomyTask.account_id == account_id,
             AutonomyTask.trigger_type == TriggerType.TIME,
             AutonomyTask.scheduled_at >= cutoff,
-            AutonomyTask.status.in_([TaskStatus.PENDING, TaskStatus.DONE]),
+            AutonomyTask.status.in_([TaskStatus.PENDING, TaskStatus.DONE, TaskStatus.CANCELLED]),
         ).order_by(AutonomyTask.scheduled_at.asc())
     )
     return list(result.scalars().all())

@@ -479,6 +479,8 @@ def _build_pending_tasks_block(lang: str, tasks: list) -> str:
             ts_local = "—"
         if t.status == TaskStatus.DONE:
             status_label = "✓ отправлено" if lang == "ru" else "✓ sent"
+        elif t.status == TaskStatus.CANCELLED:
+            status_label = "✗ отменено" if lang == "ru" else "✗ cancelled"
         elif t.scheduled_at and t.scheduled_at <= now_utc:
             status_label = "⏳ отправляется" if lang == "ru" else "⏳ sending"
         else:
@@ -597,9 +599,7 @@ async def run(account_id: str, api_key: str) -> None:
             messages.append({"role": "assistant", "content": response})
             logger.info("[reflection:%s] step %d/%d: %s", account_id, step, max_steps, response[:120])
 
-            if _SLEEP_RE.search(response):
-                logger.info("[reflection:%s] [SLEEP] at step %d", account_id, step)
-                break
+            is_sleep = bool(_SLEEP_RE.search(response))
 
             # Handle EXTEND
             extend_match = _EXTEND_RE.search(response)
@@ -631,9 +631,15 @@ async def run(account_id: str, api_key: str) -> None:
 
             # Always save free-text reasoning to workbench for context
             stripped = _CMD_RE.sub("", response).strip()
+            # Strip [SLEEP] from the saved text so it doesn't pollute the note
+            stripped = _SLEEP_RE.sub("", stripped).strip()
             if stripped and len(stripped) > 30:
                 wb.append(account_id, stripped)
                 had_writes = True
+
+            if is_sleep:
+                logger.info("[reflection:%s] [SLEEP] at step %d", account_id, step)
+                break
 
             # Build follow-up prompt based on what happened
             new_steps_left = max_steps - step
