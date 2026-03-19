@@ -136,9 +136,9 @@ def _build_chroma_block(facts: list[dict], language: str) -> str:
     before the current user turn. Written as the AI's inner recollections.
     """
     if language == "ru":
-        intro = "Вот что я помню:"
+        intro = "Твои воспоминания:"
     else:
-        intro = "What I remember:"
+        intro = "Your memories:"
 
     lines: list[str] = [intro, ""]
     for fact in facts:

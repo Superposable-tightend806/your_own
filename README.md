@@ -247,6 +247,10 @@ API requests from the phone go through a built-in Next.js proxy (`/api/*` → ba
 └────────────┘  └──────────────┘  └──────────────┘
 ```
 
+**Detailed documentation:**
+- [Memory Retrieval — how facts are selected and injected into each chat](docs/MEMORY.md)
+- [System Pipeline — how chat, memory, workbench, identity and autonomy connect](docs/PIPELINE.md)
+
 ---
 
 ## Features
