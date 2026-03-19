@@ -97,7 +97,7 @@ class TestPromptLoading:
             now_str="2026-03-18 11:00",
             workbench_block="",
         )
-        assert "НАВЫКИ" in text
+        assert "## Skills" in text
 
     def test_search_continuation_ru(self):
         text = get_prompt(

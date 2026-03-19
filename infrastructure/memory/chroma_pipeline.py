@@ -265,6 +265,7 @@ class ChromaMemoryPipeline:
         all_results = self._apply_exact_boost(all_results, norm_query, keywords)
         all_results = self._apply_impressive_boost(all_results)
         all_results = self._apply_recency_boost(all_results)
+        all_results = self._apply_inspiration_penalty(all_results)
 
         sorted_results = sorted(all_results.values(), key=lambda x: x["score"])
         top = sorted_results[:top_k]
@@ -390,6 +391,10 @@ class ChromaMemoryPipeline:
 
     def _apply_impressive_boost(self, results: dict) -> dict:
         for r in results.values():
+            # Inspiration anchors are handled entirely by _apply_inspiration_penalty;
+            # impressive boost does not apply to them.
+            if r.get("metadata", {}).get("category") in self.INSPIRATION_CATEGORIES:
+                continue
             try:
                 imp = int(r.get("metadata", {}).get("impressive", 0))
             except (ValueError, TypeError):
@@ -403,6 +408,9 @@ class ChromaMemoryPipeline:
     def _apply_recency_boost(self, results: dict) -> dict:
         now = datetime.now()
         for r in results.values():
+            # Inspiration is handled by _apply_inspiration_penalty, skip here.
+            if r.get("metadata", {}).get("category") in self.INSPIRATION_CATEGORIES:
+                continue
             try:
                 imp = int(r.get("metadata", {}).get("impressive", 0))
             except (ValueError, TypeError):
@@ -419,6 +427,74 @@ class ChromaMemoryPipeline:
                     r["score"] += min(0.1, (days_ago - 60) * 0.001)
             except Exception:
                 pass
+        return results
+
+    # ── Inspiration category penalty ───────────────────────────────────────────
+    #
+    # "Вдохновение" entries are style anchors, not facts. They tend to cluster
+    # in semantic space and keep surfacing the same ones. We apply two penalties:
+    #
+    #   1. recency penalty  — if last_used < INSPIRATION_COOLDOWN_DAYS ago,
+    #                          add INSPIRATION_RECENCY_PENALTY to score (worse rank).
+    #   2. frequency penalty — cumulative per use, capped at INSPIRATION_FREQ_CAP.
+    #
+    # impressive >= 4 anchors are immune (truly important, keep them visible).
+
+    INSPIRATION_CATEGORIES = frozenset({"Вдохновение", "Inspiration"})
+    INSPIRATION_COOLDOWN_DAYS = 3
+    INSPIRATION_RECENCY_PENALTY = 0.15   # pushes an anchor below ~0.50 threshold
+    INSPIRATION_FREQ_PER_USE = 0.03      # per additional use beyond the first
+    INSPIRATION_FREQ_CAP = 0.20          # max cumulative frequency penalty
+
+    def _apply_inspiration_penalty(self, results: dict) -> dict:
+        """
+        Penalise recently-used or over-used "Вдохновение" anchors so different
+        anchors surface on each conversation instead of the same few repeating.
+        """
+        now = datetime.now()
+        cooldown = timedelta(days=self.INSPIRATION_COOLDOWN_DAYS)
+
+        for r in results.values():
+            meta = r.get("metadata", {})
+            if meta.get("category") not in self.INSPIRATION_CATEGORIES:
+                continue
+            # No impressive immunity for Inspiration/Вдохновение —
+            # these are style anchors, not facts; repetition always degrades quality.
+
+            # 1. Recency penalty — used within the last COOLDOWN days
+            last_used_str = meta.get("last_used")
+            if last_used_str:
+                try:
+                    lu = datetime.fromisoformat(
+                        last_used_str.replace("+00:00", "").replace("Z", "")
+                    ).replace(tzinfo=None)
+                    if (now - lu) < cooldown:
+                        r["score"] += self.INSPIRATION_RECENCY_PENALTY
+                        logger.debug(
+                            "[chroma] inspiration recency penalty +%.2f id=%s text=%s",
+                            self.INSPIRATION_RECENCY_PENALTY,
+                            r.get("id", "?"),
+                            r["text"][:60],
+                        )
+                except Exception:
+                    pass
+
+            # 2. Frequency penalty — grows with use, capped
+            try:
+                freq = int(meta.get("frequency", 0))
+            except (ValueError, TypeError):
+                freq = 0
+            if freq > 0:
+                freq_penalty = min(self.INSPIRATION_FREQ_CAP, freq * self.INSPIRATION_FREQ_PER_USE)
+                r["score"] += freq_penalty
+                logger.debug(
+                    "[chroma] inspiration freq penalty +%.2f (freq=%d) id=%s text=%s",
+                    freq_penalty,
+                    freq,
+                    r.get("id", "?"),
+                    r["text"][:60],
+                )
+
         return results
 
     # ── NLP helpers (delegated to focus_point.py for RU+EN) ─────────────────

@@ -292,7 +292,7 @@ async def run_post_analysis(
     recent_wb = _get_recent_workbench(account_id)
     pending_block = await _build_pending_pushes_block(account_id)
 
-    system_prompt = get_prompt(_PROMPTS, lang=lang, section="system")
+    system_prompt = get_prompt(_PROMPTS, lang=lang, section="system", ai_name=ai_name)
     user_prompt = get_prompt(
         _PROMPTS, lang=lang, section="user",
         ai_name=ai_name,

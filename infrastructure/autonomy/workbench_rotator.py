@@ -121,26 +121,33 @@ async def _extract_self_insights(
 
     from infrastructure.memory.key_info import store_fact_with_dedup
 
+    chroma_category = "Вдохновение" if lang == "ru" else "Inspiration"
+
+    _skip_ru = ("нет ключевой информации",)
+    _skip_en = ("no key information",)
+
     count = 0
     for line in raw.strip().splitlines():
         line = line.strip()
-        if ":" not in line or line.lower().startswith("нет") or line.lower().startswith("no "):
+        if not line:
             continue
-        category, _, fact = line.partition(":")
-        fact = fact.strip()
-        category = category.strip()
-        if fact and len(fact) > 5:
-            result = await store_fact_with_dedup(
-                api_key=api_key,
-                account_id=account_id,
-                fact=fact,
-                category=category,
-                impressive=3,
-            )
-            dedup_status = result.get("dedup", "saved") if result else "skipped"
-            logger.info("[rotator:%s] self-insight: %s: %s [%s]", account_id, category, fact[:60], dedup_status)
-            if result and result.get("dedup") != "skipped":
-                count += 1
+        # Skip explicit "nothing to save" responses that slipped through per-line
+        if line.lower() in _skip_ru or line.lower() in _skip_en:
+            continue
+        # Lines must be substantial (more than a label or a very short fragment)
+        if len(line) < 10:
+            continue
+        result = await store_fact_with_dedup(
+            api_key=api_key,
+            account_id=account_id,
+            fact=line,
+            category=chroma_category,
+            impressive=3,
+        )
+        dedup_status = result.get("dedup", "saved") if result else "skipped"
+        logger.info("[rotator:%s] self-insight [%s]: %s [%s]", account_id, chroma_category, line[:60], dedup_status)
+        if result and result.get("dedup") != "skipped":
+            count += 1
 
     return count
 

@@ -33,6 +33,7 @@ data/
 # Logs
 *.log
 logs/
+debug_dataset.jsonl
 
 # ChromaDB persistent storage
 chroma_data/

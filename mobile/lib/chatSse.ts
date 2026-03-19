@@ -5,6 +5,8 @@ export type ChatSseEvent =
   | { type: "text"; chunk: string }
   | { type: "rewrite"; text: string }
   | { type: "memory"; chromaFacts: ChromaFact[] }
+  | { type: "image_start"; prompt: string }
+  | { type: "image_ready"; path: string; model: string; prompt: string }
   | { type: "skip" };
 
 const SKIP_EVENTS = new Set([
@@ -13,8 +15,6 @@ const SKIP_EVENTS = new Set([
   "search_results",
   "web_start",
   "web_done",
-  "image_start",
-  "image_ready",
   "image_urls",
 ]);
 
@@ -57,6 +57,29 @@ export function parseChatSseEvent(rawEvent: string): ChatSseEvent | null {
       return { type: "memory", chromaFacts: parsed.chroma_facts ?? [] };
     } catch {
       return null;
+    }
+  }
+
+  if (eventType === "image_start") {
+    try {
+      const parsed = JSON.parse(payload) as { prompt?: string };
+      return { type: "image_start", prompt: parsed.prompt ?? "" };
+    } catch {
+      return { type: "image_start", prompt: "" };
+    }
+  }
+
+  if (eventType === "image_ready") {
+    try {
+      const parsed = JSON.parse(payload) as { path?: string; model?: string; prompt?: string };
+      return {
+        type: "image_ready",
+        path: parsed.path ?? "",
+        model: parsed.model ?? "",
+        prompt: parsed.prompt ?? "",
+      };
+    } catch {
+      return { type: "skip" };
     }
   }
 

@@ -252,7 +252,9 @@ const mdStyles = StyleSheet.create({
   blockquote: {
     borderLeftWidth: 2,
     borderLeftColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "transparent",
     paddingLeft: 12,
+    paddingVertical: 2,
     marginLeft: 0,
     marginVertical: 6,
   },

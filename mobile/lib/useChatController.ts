@@ -310,6 +310,27 @@ export function useChatController() {
             continue;
           }
 
+          if (event.type === "image_start") {
+            flushNow();
+            const shimmerCmd = `[GENERATE_IMAGE: ${event.prompt}]`;
+            updateMessageById(assistantMessageId, (message) => ({
+              ...message,
+              content: message.content.trimEnd() + "\n" + shimmerCmd,
+            }));
+            continue;
+          }
+
+          if (event.type === "image_ready") {
+            flushNow();
+            const marker = `[GENERATED_IMAGE: ${event.path} | ${event.model} | ${event.prompt}]`;
+            updateMessageById(assistantMessageId, (message) => {
+              if (message.content.includes(`[GENERATED_IMAGE: ${event.path}`)) return message;
+              const cleaned = message.content.replace(/\[GENERATE_IMAGE:[^\]]*\]/g, "");
+              return { ...message, content: cleaned.trimEnd() + "\n" + marker };
+            });
+            continue;
+          }
+
           chunkBufRef.current += event.chunk;
           scheduleFlush();
         }

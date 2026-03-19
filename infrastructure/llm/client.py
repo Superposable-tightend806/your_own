@@ -7,12 +7,17 @@ Supports:
   no tool calls or third-party search needed
 - SSE streaming: yields text chunks as they arrive
 - Image generation via modalities: ["image", "text"] (non-streaming call)
+
+All calls log to logs/debug_dataset.jsonl (system, messages, response) for debugging.
 """
 
 import asyncio
 import base64
 import json
 import logging
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import AsyncIterator, Optional
 
 import aiohttp
@@ -21,6 +26,76 @@ from infrastructure.logging.logger import setup_logger
 logger = setup_logger("LLMClient")
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+_DEBUG_DATASET_PATH = Path(__file__).resolve().parent.parent.parent / "logs" / "debug_dataset.jsonl"
+_DEBUG_LOCK = threading.Lock()
+_MAX_DEBUG_FIELD_CHARS = 100_000
+
+
+def _truncate(s: str, max_len: int = _MAX_DEBUG_FIELD_CHARS) -> str:
+    if len(s) <= max_len:
+        return s
+    return s[:max_len] + f"... [truncated, total {len(s)} chars]"
+
+
+def _sanitize_content(content) -> str | list:
+    """Replace base64 image data with placeholder for debug log."""
+    if isinstance(content, str):
+        return _truncate(content)
+    if isinstance(content, list):
+        out = []
+        for part in content:
+            if isinstance(part, dict):
+                t = part.get("type", "")
+                if t == "image_url":
+                    url = (part.get("image_url") or {}).get("url", "")
+                    out.append({"type": "image_url", "image_url": {"url": "[base64 image]" if "base64" in url else url[:80]}})
+                elif t == "image":
+                    out.append({"type": "image", "data": "[base64]"})
+                else:
+                    out.append(part)
+            else:
+                out.append(part)
+        return out
+    return content
+
+
+def _sanitize_messages(msgs: list) -> list:
+    out = []
+    for m in msgs:
+        role = m.get("role", "")
+        content = m.get("content", "")
+        out.append({"role": role, "content": _sanitize_content(content)})
+    return out
+
+
+def _append_debug_row(
+    *,
+    call_type: str,
+    model: str,
+    system: Optional[str] = None,
+    messages: list,
+    response: str,
+    web_search: bool = False,
+    error: Optional[str] = None,
+) -> None:
+    try:
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "call_type": call_type,
+            "model": model,
+            "system": _truncate(system) if system else None,
+            "messages": _sanitize_messages(messages),
+            "response": _truncate(response),
+            "web_search": web_search,
+            "error": error,
+        }
+        line = json.dumps(row, ensure_ascii=False) + "\n"
+        _DEBUG_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _DEBUG_LOCK:
+            _DEBUG_DATASET_PATH.open("a", encoding="utf-8").write(line)
+    except Exception as exc:
+        logger.debug("[LLMClient] debug_dataset write failed: %s", exc)
+
 
 # Models that support vision (image input)
 VISION_MODELS = {
@@ -138,6 +213,7 @@ class LLMClient:
             "stream": True,
         }
 
+        chunks: list[str] = []
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{OPENROUTER_BASE}/chat/completions",
@@ -148,6 +224,16 @@ class LLMClient:
                 if resp.status != 200:
                     error_body = await resp.text()
                     logger.error("[LLMClient] OpenRouter %d: %s", resp.status, error_body)
+                    _log_msgs_err = built_messages[1:] if (built_messages and built_messages[0].get("role") == "system") else built_messages
+                    _append_debug_row(
+                        call_type="stream",
+                        model=model,
+                        system=system_prompt,
+                        messages=_log_msgs_err,
+                        response="",
+                        web_search=web_search,
+                        error=f"HTTP {resp.status}: {error_body[:500]}",
+                    )
                     yield f"[OpenRouter error {resp.status}]"
                     return
 
@@ -172,7 +258,20 @@ class LLMClient:
                     delta = choices[0].get("delta") or {}
                     chunk = delta.get("content")
                     if chunk:
+                        chunks.append(chunk)
                         yield chunk
+
+        full_response = "".join(chunks)
+        # Separate system from the rest for readability: built_messages[0] is system if present
+        _log_msgs = built_messages[1:] if (built_messages and built_messages[0].get("role") == "system") else built_messages
+        _append_debug_row(
+            call_type="stream",
+            model=model,
+            system=system_prompt,
+            messages=_log_msgs,
+            response=full_response,
+            web_search=web_search,
+        )
 
     async def complete(
         self,
@@ -183,6 +282,9 @@ class LLMClient:
         """Non-streaming single completion. Returns assistant text or '' on failure."""
         model = self.model
         temp = temperature if temperature is not None else self.temperature
+        system = None
+        if messages and messages[0].get("role") == "system":
+            system = messages[0].get("content", "")
         payload = {
             "model": model,
             "messages": messages,
@@ -206,13 +308,37 @@ class LLMClient:
                                 "[LLMClient.complete] %d on attempt %d/3: %s",
                                 resp.status, attempt, body[:200],
                             )
+                            _append_debug_row(
+                                call_type="complete",
+                                model=model,
+                                system=system,
+                                messages=messages,
+                                response="",
+                                error=f"HTTP {resp.status}: {body[:500]}",
+                            )
                         else:
                             data = await resp.json()
                             choices = data.get("choices") or []
                             if choices:
-                                return choices[0].get("message", {}).get("content", "").strip()
+                                response = choices[0].get("message", {}).get("content", "").strip()
+                                _append_debug_row(
+                                    call_type="complete",
+                                    model=model,
+                                    system=system,
+                                    messages=messages,
+                                    response=response,
+                                )
+                                return response
             except Exception as exc:
                 logger.warning("[LLMClient.complete] error on attempt %d/3: %s", attempt, exc)
+                _append_debug_row(
+                    call_type="complete",
+                    model=model,
+                    system=system,
+                    messages=messages,
+                    response="",
+                    error=str(exc),
+                )
 
             if attempt < 3:
                 await asyncio.sleep(1.5 * attempt)
@@ -224,9 +350,10 @@ class LLMClient:
         Non-streaming image generation via OpenRouter.
         Returns a base64 data URL string (data:image/png;base64,...) or None on failure.
         """
+        messages = [{"role": "user", "content": prompt}]
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "modalities": ["image", "text"],
             "stream": False,
         }
@@ -246,6 +373,13 @@ class LLMClient:
                 if resp.status != 200:
                     error_body = await resp.text()
                     logger.error("[LLMClient] generate_image error %d: %s", resp.status, error_body)
+                    _append_debug_row(
+                        call_type="generate_image",
+                        model=model,
+                        messages=messages,
+                        response="",
+                        error=f"HTTP {resp.status}: {error_body[:500]}",
+                    )
                     return None
 
                 try:
@@ -254,6 +388,13 @@ class LLMClient:
                     body = json.loads(raw)
                 except Exception as exc:
                     logger.error("[LLMClient] generate_image JSON parse error: %s", exc)
+                    _append_debug_row(
+                        call_type="generate_image",
+                        model=model,
+                        messages=messages,
+                        response="",
+                        error=str(exc),
+                    )
                     return None
 
         # Log full body at DEBUG level so we can diagnose unexpected shapes
@@ -264,6 +405,13 @@ class LLMClient:
         choices = body.get("choices") or []
         if not choices:
             logger.warning("[LLMClient] generate_image: no choices in response body=%s", _body_preview)
+            _append_debug_row(
+                call_type="generate_image",
+                model=model,
+                messages=messages,
+                response="",
+                error="no choices in response",
+            )
             return None
 
         choice = choices[0]
@@ -281,19 +429,38 @@ class LLMClient:
                     url = (part.get("image_url") or {}).get("url", "")
                     if url:
                         logger.info("[LLMClient] generate_image: found image_url part")
+                        _append_debug_row(
+                            call_type="generate_image",
+                            model=model,
+                            messages=messages,
+                            response=url,
+                        )
                         return url
                 # {"type": "image", "data": "base64...", "media_type": "image/png"}
                 if t == "image":
                     data = part.get("data") or part.get("source", {}).get("data", "")
                     if data:
                         logger.info("[LLMClient] generate_image: found image part")
-                        return f"data:image/png;base64,{data}"
+                        url = f"data:image/png;base64,{data}"
+                        _append_debug_row(
+                            call_type="generate_image",
+                            model=model,
+                            messages=messages,
+                            response=url,
+                        )
+                        return url
 
         # ── Shape 2: content is a plain string (data URL or https URL) ─────────
         if isinstance(content, str) and content.strip():
             stripped = content.strip()
             if stripped.startswith("data:") or stripped.startswith("http"):
                 logger.info("[LLMClient] generate_image: found image in string content")
+                _append_debug_row(
+                    call_type="generate_image",
+                    model=model,
+                    messages=messages,
+                    response=stripped,
+                )
                 return stripped
 
         # ── Shape 3: message-level "images" array (OpenRouter docs format) ─────
@@ -305,8 +472,20 @@ class LLMClient:
                 url = (first.get("image_url") or {}).get("url") or first.get("url", "")
                 if url:
                     logger.info("[LLMClient] generate_image: found image in message.images")
+                    _append_debug_row(
+                        call_type="generate_image",
+                        model=model,
+                        messages=messages,
+                        response=url,
+                    )
                     return url
             if isinstance(first, str) and first.strip():
+                _append_debug_row(
+                    call_type="generate_image",
+                    model=model,
+                    messages=messages,
+                    response=first.strip(),
+                )
                 return first.strip()
 
         # ── Shape 4: top-level "data" array (DALL-E style) ────────────────────
@@ -319,12 +498,25 @@ class LLMClient:
                     logger.info("[LLMClient] generate_image: found image in top-level data[]")
                     if not url.startswith("http") and not url.startswith("data:"):
                         url = f"data:image/png;base64,{url}"
+                    _append_debug_row(
+                        call_type="generate_image",
+                        model=model,
+                        messages=messages,
+                        response=url,
+                    )
                     return url
 
         logger.warning(
             "[LLMClient] generate_image: could not find image in response. "
             "Full body (truncated): %s",
             _body_preview,
+        )
+        _append_debug_row(
+            call_type="generate_image",
+            model=model,
+            messages=messages,
+            response="",
+            error="could not find image in response",
         )
         return None
 

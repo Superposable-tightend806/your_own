@@ -405,7 +405,7 @@ function MarkdownBlock({ text, role }: { text: string; role: "user" | "assistant
         </a>
       ),
       blockquote: ({ children }: any) => (
-        <blockquote className={`my-4 border-l-2 pl-4 italic ${quoteTone}`}>{children}</blockquote>
+        <blockquote className={`my-4 border-l-2 bg-transparent pl-4 italic ${quoteTone}`}>{children}</blockquote>
       ),
       h1: ({ children }: any) => <h1 className="mb-3 mt-5 text-[1.4rem] font-semibold text-white first:mt-0">{children}</h1>,
       h2: ({ children }: any) => <h2 className="mb-3 mt-5 text-[1.22rem] font-semibold text-white first:mt-0">{children}</h2>,

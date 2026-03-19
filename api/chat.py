@@ -143,7 +143,7 @@ def _build_chroma_block(facts: list[dict], language: str) -> str:
     lines: list[str] = [intro, ""]
     for fact in facts:
         meta = fact.get("metadata") or {}
-        created_at_str = meta.get("last_used") or meta.get("created_at")
+        created_at_str = meta.get("created_at")
         created_at_dt: Optional[datetime] = None
         if created_at_str:
             try:
@@ -399,7 +399,7 @@ async def chat(
                 chroma_memory_block = _build_chroma_block(chroma_facts, prompt_language)
                 for f in chroma_facts:
                     meta = f.get("metadata") or {}
-                    ts = meta.get("last_used") or meta.get("created_at")
+                    ts = meta.get("created_at")
                     chroma_facts_for_ui.append({
                         "id": f.get("id", ""),
                         "text": f.get("text", ""),
@@ -553,6 +553,7 @@ async def chat(
         _MODEL_MAP = {
             "gpt5": "openai/gpt-5-image",
             "gemini": "google/gemini-3-pro-image-preview",
+            "flux": "black-forest-labs/flux.2-pro",
         }
         model_id = _MODEL_MAP.get(model_alias, "openai/gpt-5-image")
 
