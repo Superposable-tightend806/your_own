@@ -345,16 +345,28 @@ class LLMClient:
 
         return ""
 
+    # Models that output only images (no text) — require modalities: ["image"]
+    _IMAGE_ONLY_PREFIXES = (
+        "black-forest-labs/",
+        "sourceful/",
+        "bytedance-seed/",
+    )
+
     async def generate_image(self, prompt: str, model: str) -> str | None:
         """
         Non-streaming image generation via OpenRouter.
         Returns a base64 data URL string (data:image/png;base64,...) or None on failure.
+
+        FLUX / Sourceful / ByteDance are image-only models → modalities: ["image"].
+        GPT / Gemini output both text and image → modalities: ["image", "text"].
         """
         messages = [{"role": "user", "content": prompt}]
+        image_only = any(model.startswith(p) for p in self._IMAGE_ONLY_PREFIXES)
+        modalities = ["image"] if image_only else ["image", "text"]
         payload = {
             "model": model,
             "messages": messages,
-            "modalities": ["image", "text"],
+            "modalities": modalities,
             "stream": False,
         }
         logger.info("[LLMClient] generate_image model=%s prompt=%s", model, prompt[:120])

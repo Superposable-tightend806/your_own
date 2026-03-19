@@ -572,7 +572,9 @@ async def chat(
             logger.warning("[chat] GENERATE_IMAGE returned no data")
             return None
 
-        # Extract base64 payload and save as PNG
+        # Extract base64 payload and save as PNG.
+        # Re-encode through Pillow to strip non-standard chunks (e.g. C2PA/caBX
+        # metadata injected by FLUX) that cause black squares in React Native.
         try:
             if data_url.startswith("data:"):
                 header, b64_data = data_url.split(",", 1)
@@ -581,7 +583,15 @@ async def chat(
             img_bytes = base64.b64decode(b64_data)
             filename = f"{uuid.uuid4().hex}.png"
             filepath = _GENERATED_IMAGES_DIR / filename
-            filepath.write_bytes(img_bytes)
+            try:
+                import io
+                from PIL import Image as _PILImage
+                img_obj = _PILImage.open(io.BytesIO(img_bytes))
+                buf = io.BytesIO()
+                img_obj.save(buf, format="PNG", optimize=False)
+                filepath.write_bytes(buf.getvalue())
+            except Exception:
+                filepath.write_bytes(img_bytes)
             relative_path = f"/api/generated_images/{filename}"
             logger.info("[chat] GENERATE_IMAGE saved to %s", filepath)
             _dbg(f"GENERATE_IMAGE saved {relative_path} ({len(img_bytes)} bytes)")
