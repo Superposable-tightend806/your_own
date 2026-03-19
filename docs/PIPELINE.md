@@ -23,7 +23,7 @@ This document describes the full data flow of the system — from a chat message
 │  Final LLM message list:                                             │
 │  [SYSTEM] soul + skills + workbench                                  │
 │  [USER/ASST] × 6 pairs of history                                    │
-│  [ASST] "Вот что я помню: ..."  ← chroma facts                       │
+│  [ASST] "Your memories: ..."  ← chroma facts                       │
 │  [USER] current message                                              │
 └──────────────────────────────┬───────────────────────────────────────┘
                                ▼
