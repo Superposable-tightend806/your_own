@@ -38,7 +38,7 @@ async def _complete(api_key: str, system: str, user: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        max_tokens=256,
+        max_tokens=512,
         temperature=0.3,
     )
 
@@ -110,7 +110,9 @@ async def extract_and_store(
     )
     raw = await _complete(api_key, key_info_sys, key_info_user)
     if not raw:
+        logger.warning("[key_info] _complete returned empty for hint=%s", (hint or pairs_text)[:80])
         return None
+    logger.info("[key_info] extraction raw=%s", raw[:200])
 
     try:
         # Try to extract JSON even if wrapped in markdown fences

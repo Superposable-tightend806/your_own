@@ -115,7 +115,7 @@ async def _extract_self_insights(
         notes=notes_block,
     )
     sys_msg = "Верни только строки. Без пояснений." if lang == "ru" else "Return only lines. No explanations."
-    raw = await _complete(api_key, sys_msg, user_prompt, temperature=0.5, max_tokens=500)
+    raw = await _complete(api_key, sys_msg, user_prompt, temperature=0.5, max_tokens=650)
     if not raw or raw.strip().lower() in ("нет ключевой информации", "no key information"):
         return 0
 
@@ -171,7 +171,7 @@ async def _review_identity(
         identity=identity_content,
         notes=notes_block,
     )
-    raw = await _complete(api_key, sys_prompt, user_prompt, temperature=0.3, max_tokens=500)
+    raw = await _complete(api_key, sys_prompt, user_prompt, temperature=0.3, max_tokens=650)
     if not raw or raw.strip().lower() in ("нет", "no"):
         return False
 

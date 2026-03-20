@@ -543,11 +543,20 @@ async def chat(
 
             # ── Parse all skill commands via registry ─────────────────────
             assistant_text, all_matches = skill_registry.strip_skills(full_text, enabled_skills)
-            assistant_text_full = assistant_text
 
             action_matches = [(s, m) for s, m in all_matches if s.action_type in ("agentic", "inline")]
             post_matches = [(s, m) for s, m in all_matches if s.action_type == "post"]
             has_actions = bool(action_matches)
+
+            # When only post-skills fire (save/schedule) mid-reply, strip
+            # the raw commands but keep ALL surrounding text intact.
+            if not has_actions and post_matches:
+                stripped = full_text
+                for _, m in sorted(post_matches, key=lambda x: x[1].start(), reverse=True):
+                    stripped = stripped[:m.start()] + stripped[m.end():]
+                assistant_text = re.sub(r"\n{3,}", "\n\n", stripped).strip()
+
+            assistant_text_full = assistant_text
 
             _dbg(f"PARSED actions={len(action_matches)} post={len(post_matches)} clean_len={len(assistant_text)}")
             logger.info("[chat] parsed skills actions=%d post=%d clean=%s",
@@ -559,7 +568,7 @@ async def chat(
             if not has_actions and buffering:
                 _dbg("BUFFER_FLUSH — no actions, flushing buffered post-only text")
                 yield "event: rewrite\n"
-                yield f"data: {json.dumps({'text': full_text})}\n\n"
+                yield f"data: {json.dumps({'text': assistant_text})}\n\n"
 
             if has_actions:
                 _dbg(f"REWRITE clean_text before actions len={len(assistant_text)}")
@@ -678,6 +687,7 @@ async def chat(
 
             # ── Post-skills: SAVE_MEMORY ─────────────────────────────────
             save_matches_raw = [m for s, m in all_post_matches if s.id == "save_memory"]
+            _dbg(f"POST_SKILLS all_post={len(all_post_matches)} save_matches={len(save_matches_raw)} sched_matches={len([m for s, m in all_post_matches if s.id == 'schedule_message'])}")
             from infrastructure.skills.save_memory.skill import skill as save_skill
             save_memory_results = await save_skill.execute_batch(save_matches_raw, assistant_text, skill_ctx)
             logger.info("[chat] save_memory results=%d", len(save_memory_results))
