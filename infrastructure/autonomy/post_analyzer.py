@@ -312,7 +312,7 @@ async def run_post_analysis(
             {"role": "user", "content": user_prompt},
         ],
         max_tokens=1500,
-        temperature=0.6,
+        temperature=0.7,
     )
     if not response:
         logger.info("[post_analyzer:%s] empty LLM response", account_id)
