@@ -33,6 +33,8 @@ _DEFAULTS: dict[str, object] = {
     "reflection_interval_hours": 12,
     # User's local timezone (IANA name, e.g. "Asia/Yerevan", "Europe/Moscow")
     "user_timezone": "Asia/Yerevan",
+    # Skills that are active in the chat pipeline (None = all enabled)
+    "enabled_skills": None,
 }
 
 _lock = Lock()

@@ -433,6 +433,20 @@ export default function ChatPage() {
             continue;
           }
 
+          if (eventType === "image_cancel") {
+            flushNow();
+            setMessages((prev) => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1];
+              updated[updated.length - 1] = {
+                ...last,
+                content: last.content.replace(/\[GENERATE_IMAGE:[^\]]*\]/g, "").trimEnd(),
+              };
+              return updated;
+            });
+            continue;
+          }
+
           if (eventType === "image_ready") {
             try {
               const { path, model, prompt } = JSON.parse(chunk) as {

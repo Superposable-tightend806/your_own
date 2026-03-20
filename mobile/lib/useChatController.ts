@@ -320,6 +320,15 @@ export function useChatController() {
             continue;
           }
 
+          if (event.type === "image_cancel") {
+            flushNow();
+            updateMessageById(assistantMessageId, (message) => ({
+              ...message,
+              content: message.content.replace(/\[GENERATE_IMAGE:[^\]]*\]/g, "").trimEnd(),
+            }));
+            continue;
+          }
+
           if (event.type === "image_ready") {
             flushNow();
             const marker = `[GENERATED_IMAGE: ${event.path} | ${event.model} | ${event.prompt}]`;

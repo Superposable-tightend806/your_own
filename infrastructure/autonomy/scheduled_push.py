@@ -62,6 +62,24 @@ async def run_due(account_id: str) -> None:
 
         logger.info("[scheduled_push:%s] %d due task(s)", account_id, len(tasks))
 
+        # Deduplicate by scheduled_at: keep only the most recently created task
+        # per time slot. Any earlier duplicates are marked DONE without sending.
+        seen_times: dict[datetime, object] = {}
+        from datetime import datetime as _dt
+        for task in sorted(tasks, key=lambda t: t.created_at or _dt.min):
+            seen_times[task.scheduled_at] = task
+        dedup_tasks = list(seen_times.values())
+
+        for task in tasks:
+            if task not in dedup_tasks:
+                logger.info(
+                    "[scheduled_push] dedup: suppressing duplicate task_id=%s at %s",
+                    task.id, task.scheduled_at,
+                )
+                await mark_done(db, task.id)
+
+        tasks = dedup_tasks
+
         for task in tasks:
             # Phase 1: mark DONE immediately to prevent double-delivery
             await mark_done(db, task.id)

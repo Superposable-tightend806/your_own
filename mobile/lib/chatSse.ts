@@ -7,6 +7,7 @@ export type ChatSseEvent =
   | { type: "memory"; chromaFacts: ChromaFact[] }
   | { type: "image_start"; prompt: string }
   | { type: "image_ready"; path: string; model: string; prompt: string }
+  | { type: "image_cancel" }
   | { type: "skip" };
 
 const SKIP_EVENTS = new Set([
@@ -67,6 +68,10 @@ export function parseChatSseEvent(rawEvent: string): ChatSseEvent | null {
     } catch {
       return { type: "image_start", prompt: "" };
     }
+  }
+
+  if (eventType === "image_cancel") {
+    return { type: "image_cancel" };
   }
 
   if (eventType === "image_ready") {

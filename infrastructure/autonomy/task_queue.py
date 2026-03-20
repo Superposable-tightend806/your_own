@@ -177,14 +177,17 @@ async def cancel_duplicate_scheduled(
     scheduled_at: datetime,
     source: str,
 ) -> int:
-    """Cancel pending TIME tasks at the same time from the same source."""
+    """Cancel ALL pending TIME tasks at the same scheduled time, regardless of source.
+
+    The ``source`` parameter is kept for backwards compatibility but no longer
+    used as a filter — any pending task at the same time slot is a duplicate.
+    """
     result = await db.execute(
         select(AutonomyTask).where(
             AutonomyTask.account_id == account_id,
             AutonomyTask.trigger_type == TriggerType.TIME,
             AutonomyTask.status == TaskStatus.PENDING,
             AutonomyTask.scheduled_at == scheduled_at,
-            AutonomyTask.payload.contains(source),
         )
     )
     tasks = list(result.scalars().all())
@@ -192,4 +195,8 @@ async def cancel_duplicate_scheduled(
         t.status = TaskStatus.CANCELLED
     if tasks:
         await db.commit()
+        logger.debug(
+            "[task_queue] cancelled %d duplicate(s) at %s before new %s task",
+            len(tasks), scheduled_at, source,
+        )
     return len(tasks)

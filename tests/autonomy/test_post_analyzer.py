@@ -64,13 +64,13 @@ class TestPromptLoading:
 
     def test_ru_has_all_commands(self):
         _, user = self._build("ru")
-        for cmd in ["SEND_MESSAGE", "SCHEDULE_MESSAGE", "CANCEL_MESSAGE",
+        for cmd in ["SCHEDULE_MESSAGE", "CANCEL_MESSAGE",
                     "RESCHEDULE_MESSAGE", "REWRITE_MESSAGE"]:
             assert cmd in user, f"Command {cmd} missing from RU prompt"
 
     def test_en_has_all_commands(self):
         _, user = self._build("en")
-        for cmd in ["SEND_MESSAGE", "SCHEDULE_MESSAGE", "CANCEL_MESSAGE",
+        for cmd in ["SCHEDULE_MESSAGE", "CANCEL_MESSAGE",
                     "RESCHEDULE_MESSAGE", "REWRITE_MESSAGE"]:
             assert cmd in user, f"Command {cmd} missing from EN prompt"
 

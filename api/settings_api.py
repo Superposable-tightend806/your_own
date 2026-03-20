@@ -32,6 +32,7 @@ class SettingsPatch(BaseModel):
     pushy_device_token: str | None = None
     reflection_cooldown_hours: int | None = None
     reflection_interval_hours: int | None = None
+    enabled_skills: list[str] | None = None
 
 
 class SoulBody(BaseModel):
@@ -62,6 +63,30 @@ async def put_settings(body: SettingsPatch, _token: str = Depends(require_auth))
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     updated = save_settings(patch)
     return {"ok": True, "settings": updated}
+
+
+# ── Skills ────────────────────────────────────────────────────────────────────
+
+@router.get("/skills")
+async def get_skills(_token: str = Depends(require_auth)):
+    """Return all registered skills with their enabled status."""
+    from infrastructure.skills.registry import get_all
+
+    settings = load_settings()
+    enabled_ids = settings.get("enabled_skills")
+
+    skills_out = []
+    for s in get_all():
+        skills_out.append({
+            "id": s.id,
+            "cmd_name": s.cmd_name,
+            "display": s.display,
+            "description": s.description,
+            "example": s.example,
+            "action_type": s.action_type,
+            "enabled": enabled_ids is None or s.id in enabled_ids,
+        })
+    return {"skills": skills_out}
 
 
 # ── Soul CRUD ────────────────────────────────────────────────────────────────

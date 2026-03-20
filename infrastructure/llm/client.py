@@ -320,15 +320,34 @@ class LLMClient:
                             data = await resp.json()
                             choices = data.get("choices") or []
                             if choices:
-                                response = choices[0].get("message", {}).get("content", "").strip()
-                                _append_debug_row(
-                                    call_type="complete",
-                                    model=model,
-                                    system=system,
-                                    messages=messages,
-                                    response=response,
-                                )
-                                return response
+                                choice = choices[0]
+                                # Provider may return an error inside choices
+                                # with message=null — treat as a retryable failure.
+                                if choice.get("error"):
+                                    err = choice["error"]
+                                    logger.warning(
+                                        "[LLMClient.complete] provider error in choices on attempt %d/3: %s",
+                                        attempt, err,
+                                    )
+                                    _append_debug_row(
+                                        call_type="complete",
+                                        model=model,
+                                        system=system,
+                                        messages=messages,
+                                        response="",
+                                        error=str(err),
+                                    )
+                                else:
+                                    message = choice.get("message") or {}
+                                    response = (message.get("content") or "").strip()
+                                    _append_debug_row(
+                                        call_type="complete",
+                                        model=model,
+                                        system=system,
+                                        messages=messages,
+                                        response=response,
+                                    )
+                                    return response
             except Exception as exc:
                 logger.warning("[LLMClient.complete] error on attempt %d/3: %s", attempt, exc)
                 _append_debug_row(

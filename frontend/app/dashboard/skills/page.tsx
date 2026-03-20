@@ -1,65 +1,22 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiGet, apiPut } from "@/lib/api";
 
-// ── Skill definitions ─────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
-interface SkillDef {
-  cmd: string;
-  label: string;
-  labelRu: string;
-  description: string;
-  descriptionRu: string;
-  status: "active" | "soon";
-  example?: string;
+interface SkillInfo {
+  id: string;
+  cmd_name: string;
+  display: { en: string; ru: string };
+  description: { en: string; ru: string };
+  example: string | null;
+  action_type: string;
+  enabled: boolean;
 }
 
-const SKILLS: SkillDef[] = [
-  {
-    cmd: "[SAVE_MEMORY: ...]",
-    label: "Save Memory",
-    labelRu: "Запомнить",
-    description: "AI extracts a key fact from the conversation and saves it to long-term memory. Triggered when the AI decides something is worth remembering.",
-    descriptionRu: "AI извлекает ключевой факт из разговора и сохраняет его в долгосрочную память. Запускается когда AI решает что-то стоит запомнить.",
-    status: "active",
-    example: "[SAVE_MEMORY: Пользователь продала дом в ноябре после долгой уборки]",
-  },
-  {
-    cmd: "[SEARCH_MEMORIES: ...]",
-    label: "Search Memories",
-    labelRu: "Поиск воспоминаний",
-    description: "AI searches raw conversation history in pgvector for relevant past context. Results are injected as an agentic step — AI receives them and replies with awareness of what it found.",
-    descriptionRu: "AI ищет в истории разговоров через pgvector релевантный контекст. Результаты инжектируются как агентный шаг — AI получает их и отвечает с учётом найденного.",
-    status: "active",
-    example: "[SEARCH_MEMORIES: работа начальница конфликт]",
-  },
-  {
-    cmd: "[WEB_SEARCH: ...]",
-    label: "Web Search",
-    labelRu: "Поиск в интернете",
-    description: "AI searches the live web for fresh external information such as weather, news, prices, addresses, or opening hours, then folds it into the reply.",
-    descriptionRu: "AI ищет актуальную информацию в интернете: погоду, новости, цены, адреса, часы работы — и затем вплетает найденное в ответ.",
-    status: "active",
-    example: "[WEB_SEARCH: погода Ереван Ленинградян 21/15]",
-  },
-  {
-    cmd: "[GENERATE_IMAGE: model | prompt]",
-    label: "Image Generation",
-    labelRu: "Генерация изображений",
-    description:
-      "AI creates images using GPT-5 Image (photorealistic, detailed) or Gemini 3 Pro (design, diagrams, text). " +
-      "The AI chooses the model and writes the prompt itself — it can share images spontaneously, not only when asked. " +
-      "One image per reply. Generated images are saved to disk and displayed inline in chat with lightbox and download.",
-    descriptionRu:
-      "AI создаёт изображения через GPT-5 Image (фотореализм, детали) или Gemini 3 Pro (дизайн, схемы, текст). " +
-      "AI сам выбирает модель и пишет промпт — может делиться картинками спонтанно, не только по запросу. " +
-      "Одно изображение за ответ. Сгенерированные изображения сохраняются на диск и отображаются в чате с просмотром и скачиванием.",
-    status: "active",
-    example: "[GENERATE_IMAGE: gpt5 | night sky over Yerevan rooftops, stars, a single lit window, cinematic mood]",
-  },
-];
-
-// ── How it works steps ────────────────────────────────────────────────────────
+// ── How-it-works steps (static) ──────────────────────────────────────────────
 
 const HOW_IT_WORKS = [
   {
@@ -84,8 +41,46 @@ const HOW_IT_WORKS = [
   },
 ];
 
+// ── Status badge / button ────────────────────────────────────────────────────
+
+// ── Page ─────────────────────────────────────────────────────────────────────
+
 export default function SkillsPage() {
   const router = useRouter();
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ skills: SkillInfo[] }>("/api/settings/skills")
+      .then((d) => setSkills(d.skills))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggleSkill = useCallback(
+    async (id: string, enabled: boolean) => {
+      const updated = skills.map((s) =>
+        s.id === id ? { ...s, enabled } : s,
+      );
+      setSkills(updated);
+
+      const allEnabled = updated.every((s) => s.enabled);
+      const enabledIds = allEnabled
+        ? null
+        : updated.filter((s) => s.enabled).map((s) => s.id);
+
+      setSaving(true);
+      try {
+        await apiPut("/api/settings", { enabled_skills: enabledIds });
+      } catch {
+        setSkills(skills);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [skills],
+  );
 
   return (
     <div className="flex h-screen w-screen flex-col bg-black text-white">
@@ -113,69 +108,81 @@ export default function SkillsPage() {
         <div className="mx-auto max-w-4xl flex flex-col gap-14">
 
           {/* ── Skill cards grid ── */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {SKILLS.map((skill) => (
-              <div
-                key={skill.cmd}
-                className={`
-                  border p-6 flex flex-col gap-4
-                  transition-colors duration-300
-                  ${skill.status === "active"
-                    ? "border-white/18 hover:border-white/40 bg-white/[0.015]"
-                    : "border-white/8 bg-black opacity-50"
-                  }
-                `}
-              >
-                {/* Top row */}
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[0.95rem] font-light tracking-[0.18em] uppercase text-white/75">
-                      {skill.label}
-                    </span>
-                    <span className="text-[0.72rem] tracking-[0.1em] text-white/35">
-                      {skill.labelRu}
-                    </span>
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <span className="text-[0.7rem] tracking-[0.2em] uppercase text-white/25 animate-pulse">
+                loading skills…
+              </span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {skills.map((skill) => (
+                <div
+                  key={skill.id}
+                  className={`
+                    border p-6 flex flex-col gap-4
+                    transition-colors duration-300
+                    ${skill.enabled
+                      ? "border-white/18 hover:border-white/40 bg-white/[0.015]"
+                      : "border-white/8 bg-black opacity-50"
+                    }
+                  `}
+                >
+                  {/* Top row */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[0.95rem] font-light tracking-[0.18em] uppercase text-white/75">
+                        {skill.display.en}
+                      </span>
+                      <span className="text-[0.72rem] tracking-[0.1em] text-white/35">
+                        {skill.display.ru}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => toggleSkill(skill.id, !skill.enabled)}
+                      disabled={saving}
+                      className={`
+                        shrink-0 border px-2.5 py-1 text-[0.55rem] tracking-[0.2em] uppercase
+                        transition-colors duration-200 cursor-pointer
+                        ${skill.enabled
+                          ? "border-white/25 text-white/50 hover:border-white/40 hover:text-white/70"
+                          : "border-white/10 text-white/20 hover:border-white/20 hover:text-white/35"
+                        }
+                        ${saving ? "opacity-40 cursor-not-allowed" : ""}
+                      `}
+                    >
+                      {skill.enabled ? "enabled" : "disabled"}
+                    </button>
                   </div>
-                  <span
-                    className={`
-                      shrink-0 border px-2.5 py-1 text-[0.55rem] tracking-[0.2em] uppercase
-                      ${skill.status === "active"
-                        ? "border-white/25 text-white/50"
-                        : "border-white/10 text-white/20"
-                      }
-                    `}
-                  >
-                    {skill.status === "active" ? "active" : "coming soon"}
-                  </span>
+
+                  {/* Command chip */}
+                  <code className="block w-full border border-white/10 bg-white/[0.03] px-3 py-2 text-[0.68rem] tracking-[0.06em] text-white/45 font-mono">
+                    [{skill.cmd_name}: …]
+                  </code>
+
+                  {/* Description */}
+                  <p className="text-[0.78rem] leading-relaxed text-white/45">
+                    {skill.description.en}
+                  </p>
+                  <p className="text-[0.72rem] leading-relaxed text-white/28">
+                    {skill.description.ru}
+                  </p>
+
+                  {/* Example */}
+                  {skill.example && (
+                    <div className="border-t border-white/8 pt-3">
+                      <p className="mb-1 text-[0.55rem] tracking-[0.2em] uppercase text-white/20">
+                        example
+                      </p>
+                      <code className="block text-[0.65rem] leading-relaxed text-white/30 font-mono break-all">
+                        {skill.example}
+                      </code>
+                    </div>
+                  )}
                 </div>
-
-                {/* Command chip */}
-                <code className="block w-full border border-white/10 bg-white/[0.03] px-3 py-2 text-[0.68rem] tracking-[0.06em] text-white/45 font-mono">
-                  {skill.cmd}
-                </code>
-
-                {/* Description */}
-                <p className="text-[0.78rem] leading-relaxed text-white/45">
-                  {skill.description}
-                </p>
-                <p className="text-[0.72rem] leading-relaxed text-white/28">
-                  {skill.descriptionRu}
-                </p>
-
-                {/* Example */}
-                {skill.example && (
-                  <div className="border-t border-white/8 pt-3">
-                    <p className="mb-1 text-[0.55rem] tracking-[0.2em] uppercase text-white/20">
-                      example
-                    </p>
-                    <code className="block text-[0.65rem] leading-relaxed text-white/30 font-mono break-all">
-                      {skill.example}
-                    </code>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           {/* ── How it works ── */}
           <div>
