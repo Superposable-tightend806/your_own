@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import uuid
 from datetime import datetime, timezone
 
 from infrastructure.autonomy import identity_memory as identity
@@ -28,6 +26,7 @@ from infrastructure.autonomy.cmd_parser import (
     parse_commands,
     strip_commands,
 )
+from infrastructure.autonomy.helpers import detect_lang, get_ai_name, make_llm_client, save_push_message
 from infrastructure.llm.prompt_loader import get_prompt
 from infrastructure.settings_store import now_local
 
@@ -36,22 +35,6 @@ from infrastructure.logging.logger import setup_logger
 logger = setup_logger("autonomy.post_analyzer")
 
 _PROMPTS = "infrastructure/autonomy/prompts/post_analyzer.md"
-
-
-def _get_ai_name() -> str:
-    from infrastructure.settings_store import load_settings
-    return load_settings().get("ai_name", "") or "AI"
-
-
-def _make_client(api_key: str):
-    from infrastructure.llm.client import LLMClient
-    from infrastructure.settings_store import load_settings
-    s = load_settings()
-    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
-
-
-def _detect_lang(text: str) -> str:
-    return "ru" if re.search(r"[А-Яа-яЁё]", text or "") else "en"
 
 
 def _format_history(
@@ -75,18 +58,6 @@ def _format_history(
     return "\n".join(lines)
 
 
-def _get_recent_workbench(account_id: str, max_entries: int = 3) -> str:
-    """Return the last N workbench entries for context."""
-    content = wb.read(account_id)
-    if not content:
-        return "(пусто)"
-    entries = wb._parse_entries(content)
-    if not entries:
-        return "(пусто)"
-    parts = []
-    for ts, body in entries[-max_entries:]:
-        parts.append(f"[{ts}] {body}")
-    return "\n---\n".join(parts)
 
 
 def _identity_excerpt(account_id: str, max_chars: int = 500) -> str:
@@ -163,58 +134,28 @@ async def _build_pending_pushes_block(account_id: str) -> str:
 
 async def _execute_command(cmd: ParsedCommand, *, account_id: str, lang: str) -> None:
     """Execute one parsed autonomy command."""
-    from infrastructure.database.engine import get_db_session
-    from infrastructure.autonomy.task_queue import (
-        cancel_duplicate_scheduled,
-        cancel_task_by_time,
-        create_task,
-        reschedule_task,
+    from infrastructure.autonomy.helpers import (
+        send_push_and_save,
+        schedule_message,
+        cancel_message,
+        reschedule_message,
+        rewrite_message,
     )
-    from infrastructure.database.models.autonomy_task import TriggerType
-    from infrastructure.settings_store import local_to_utc
 
-    _ru = lang == "ru"
+    _log = "post_analyzer"
 
     if isinstance(cmd, SendMessage):
         try:
-            from infrastructure.pushy.client import get_client
-            client = get_client()
-            if client:
-                await client.send(title=_get_ai_name(), body=cmd.text)
-                logger.info("[post_analyzer:%s] sent push: %s", account_id, cmd.text[:80])
-            else:
-                logger.warning("[post_analyzer] SEND_MESSAGE: Pushy not configured")
-            from infrastructure.memory.live_store import build_canonical_row
-            from infrastructure.database.repositories.message_repo import MessageRepository
-            row = build_canonical_row(
-                pair_id=uuid.uuid4(), account_id=account_id,
-                role="assistant", text=cmd.text, source="push",
-            )
-            async with get_db_session() as db:
-                await MessageRepository(db).bulk_save([row])
-            _pfx = "Написал ей" if _ru else "Sent message"
-            _preview = cmd.text[:60] + ("…" if len(cmd.text) > 60 else "")
-            wb.append(account_id, f"{_pfx}: «{_preview}»")
+            await send_push_and_save(account_id=account_id, text=cmd.text, lang=lang, log_prefix=_log)
         except Exception as exc:
             logger.warning("[post_analyzer] SEND_MESSAGE failed: %s", exc)
 
     elif isinstance(cmd, ScheduleMessage):
         try:
-            scheduled_at = local_to_utc(datetime.strptime(cmd.ts_str, "%Y-%m-%d %H:%M"))
-            async with get_db_session() as db:
-                await cancel_duplicate_scheduled(db, account_id, scheduled_at, "postanalysis")
-                payload = json.dumps({"message": cmd.text, "source": "postanalysis"})
-                await create_task(
-                    db,
-                    account_id=account_id,
-                    trigger_type=TriggerType.TIME,
-                    payload=payload,
-                    scheduled_at=scheduled_at,
-                )
-            logger.info("[post_analyzer:%s] scheduled message at %s", account_id, cmd.ts_str)
-            _pfx = "Запланировал сообщение на" if _ru else "Scheduled message for"
-            _preview = cmd.text[:60] + ("…" if len(cmd.text) > 60 else "")
-            wb.append(account_id, f"{_pfx} {cmd.ts_str}: «{_preview}»")
+            await schedule_message(
+                account_id=account_id, ts_str=cmd.ts_str, text=cmd.text,
+                lang=lang, source="postanalysis", log_prefix=_log,
+            )
         except ValueError:
             logger.warning("[post_analyzer] bad SCHEDULE_MESSAGE ts: %r", cmd.ts_str)
         except Exception as exc:
@@ -222,13 +163,7 @@ async def _execute_command(cmd: ParsedCommand, *, account_id: str, lang: str) ->
 
     elif isinstance(cmd, CancelMessage):
         try:
-            scheduled_at = local_to_utc(datetime.strptime(cmd.ts_str, "%Y-%m-%d %H:%M"))
-            async with get_db_session() as db:
-                found = await cancel_task_by_time(db, account_id, scheduled_at)
-            logger.info("[post_analyzer:%s] CANCEL_MESSAGE %s found=%s", account_id, cmd.ts_str, found)
-            if found:
-                _pfx = "Отменил сообщение на" if _ru else "Cancelled message for"
-                wb.append(account_id, f"{_pfx} {cmd.ts_str}")
+            await cancel_message(account_id=account_id, ts_str=cmd.ts_str, lang=lang, log_prefix=_log)
         except ValueError:
             logger.warning("[post_analyzer] bad CANCEL_MESSAGE ts: %r", cmd.ts_str)
         except Exception as exc:
@@ -236,18 +171,10 @@ async def _execute_command(cmd: ParsedCommand, *, account_id: str, lang: str) ->
 
     elif isinstance(cmd, RescheduleMessage):
         try:
-            old_utc = local_to_utc(datetime.strptime(cmd.old_ts_str, "%Y-%m-%d %H:%M"))
-            new_utc = local_to_utc(datetime.strptime(cmd.new_ts_str, "%Y-%m-%d %H:%M"))
-            async with get_db_session() as db:
-                found = await reschedule_task(db, account_id, old_utc, new_utc)
-            logger.info(
-                "[post_analyzer:%s] RESCHEDULE_MESSAGE %s -> %s found=%s",
-                account_id, cmd.old_ts_str, cmd.new_ts_str, found,
+            await reschedule_message(
+                account_id=account_id, old_ts_str=cmd.old_ts_str,
+                new_ts_str=cmd.new_ts_str, lang=lang, log_prefix=_log,
             )
-            if found:
-                _pfx = "Перенёс сообщение с" if _ru else "Rescheduled message from"
-                _mid = "на" if _ru else "to"
-                wb.append(account_id, f"{_pfx} {cmd.old_ts_str} {_mid} {cmd.new_ts_str}")
         except ValueError:
             logger.warning("[post_analyzer] bad RESCHEDULE_MESSAGE: %r -> %r", cmd.old_ts_str, cmd.new_ts_str)
         except Exception as exc:
@@ -255,15 +182,10 @@ async def _execute_command(cmd: ParsedCommand, *, account_id: str, lang: str) ->
 
     elif isinstance(cmd, RewriteMessage):
         try:
-            from infrastructure.autonomy.task_queue import rewrite_task
-            scheduled_at = local_to_utc(datetime.strptime(cmd.ts_str, "%Y-%m-%d %H:%M"))
-            async with get_db_session() as db:
-                found = await rewrite_task(db, account_id, scheduled_at, cmd.new_text)
-            logger.info("[post_analyzer:%s] REWRITE_MESSAGE %s found=%s", account_id, cmd.ts_str, found)
-            if found:
-                _pfx = "Переписал сообщение на" if _ru else "Rewrote message for"
-                _preview = cmd.new_text[:60] + ("…" if len(cmd.new_text) > 60 else "")
-                wb.append(account_id, f"{_pfx} {cmd.ts_str}: «{_preview}»")
+            await rewrite_message(
+                account_id=account_id, ts_str=cmd.ts_str,
+                new_text=cmd.new_text, lang=lang, log_prefix=_log,
+            )
         except ValueError:
             logger.warning("[post_analyzer] bad REWRITE_MESSAGE ts: %r", cmd.ts_str)
         except Exception as exc:
@@ -282,14 +204,14 @@ async def run_post_analysis(
 
     Fires in the background after the chat stream ends — zero latency for the user.
     """
-    ai_name = _get_ai_name()
+    ai_name = get_ai_name()
     now_str = now_local().strftime("%Y-%m-%d %H:%M")
 
     message_history = _format_history(recent_pairs, current_user_text, current_assistant_text)
-    lang = _detect_lang(message_history)
+    lang = detect_lang(message_history)
 
     identity_text = _identity_excerpt(account_id)
-    recent_wb = _get_recent_workbench(account_id)
+    recent_wb = wb.get_recent_entries(account_id, max_entries=3, empty_label="(пусто)")
     pending_block = await _build_pending_pushes_block(account_id)
 
     system_prompt = get_prompt(_PROMPTS, lang=lang, section="system", ai_name=ai_name)
@@ -305,7 +227,7 @@ async def run_post_analysis(
 
     logger.info("[post_analyzer:%s] starting, lang=%s history_pairs=%d", account_id, lang, len(recent_pairs))
 
-    client = _make_client(api_key)
+    client = make_llm_client(api_key)
     response = await client.complete(
         messages=[
             {"role": "system", "content": system_prompt},

@@ -13,40 +13,13 @@ if the process dies after Phase 1 but before Phase 2 the task stays DONE
 from __future__ import annotations
 
 import json
-import re
-import uuid
 
+from infrastructure.autonomy.helpers import detect_lang, get_ai_name, save_push_message
 from infrastructure.database.engine import get_db_session
 
 from infrastructure.logging.logger import setup_logger
 
 logger = setup_logger("autonomy.scheduled_push")
-
-
-def _get_ai_name() -> str:
-    from infrastructure.settings_store import load_settings
-    return load_settings().get("ai_name", "") or "AI"
-
-
-def _detect_lang(text: str) -> str:
-    return "ru" if re.search(r"[А-Яа-яЁё]", text or "") else "en"
-
-
-async def _save_push_to_db(db, account_id: str, text: str) -> None:
-    """Persist the sent push as an assistant message visible in chat history."""
-    from infrastructure.memory.live_store import build_canonical_row
-    from infrastructure.database.repositories.message_repo import MessageRepository
-
-    row = build_canonical_row(
-        pair_id=uuid.uuid4(),
-        account_id=account_id,
-        role="assistant",
-        text=text,
-        source="push",
-    )
-    repo = MessageRepository(db)
-    await repo.bulk_save([row])
-    logger.info("[scheduled_push:%s] saved push to messages DB", account_id)
 
 
 async def run_due(account_id: str) -> None:
@@ -107,7 +80,7 @@ async def run_due(account_id: str) -> None:
             from infrastructure.pushy.client import get_client
             from infrastructure.settings_store import load_settings as _ls
             _s = _ls()
-            ai_name = settings.get("ai_name", "") or "AI"
+            ai_name = get_ai_name()
             _has_api_key = bool(_s.get("pushy_api_key", ""))
             _has_token = bool(_s.get("pushy_device_token", ""))
             logger.info(
@@ -127,11 +100,11 @@ async def run_due(account_id: str) -> None:
                 logger.warning("[scheduled_push] Pushy not configured (api_key or device_token missing), skipping push task_id=%s", task.id)
 
             # Phase 3: persist in chat history
-            await _save_push_to_db(db, account_id, message)
+            await save_push_message(account_id=account_id, text=message)
 
             # Phase 4: log to workbench
             from infrastructure.autonomy import workbench as wb
-            _lang = _detect_lang(message)
+            _lang = detect_lang(message)
             _preview = message[:60] + ("…" if len(message) > 60 else "")
             _pfx = "Отправил сообщение" if _lang == "ru" else "Sent message"
             wb.append(account_id, f"{_pfx}: «{_preview}»")

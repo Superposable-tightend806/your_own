@@ -92,7 +92,8 @@ def _append_debug_row(
         line = json.dumps(row, ensure_ascii=False) + "\n"
         _DEBUG_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
         with _DEBUG_LOCK:
-            _DEBUG_DATASET_PATH.open("a", encoding="utf-8").write(line)
+            with _DEBUG_DATASET_PATH.open("a", encoding="utf-8") as f:
+                f.write(line)
     except Exception as exc:
         logger.debug("[LLMClient] debug_dataset write failed: %s", exc)
 
@@ -109,12 +110,13 @@ class LLMClient:
     def __init__(
         self,
         api_key: str,
-        model: str = "anthropic/claude-opus-4.6",
+        model: str = "",
         temperature: float = 0.7,
         top_p: float = 0.9,
     ):
+        from infrastructure.settings_store import DEFAULT_MODEL
         self.api_key = api_key
-        self.model = model
+        self.model = model or DEFAULT_MODEL
         self.temperature = temperature
         self.top_p = top_p
 

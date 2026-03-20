@@ -29,21 +29,18 @@ the entire lang section is returned.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Cache raw file contents to avoid repeated disk reads within a request.
-_cache: dict[Path, str] = {}
 
-
+@lru_cache(maxsize=64)
 def _load_raw(path: str | Path) -> str:
     p = Path(path)
     if not p.is_absolute():
         p = _PROJECT_ROOT / p
-    if p not in _cache:
-        _cache[p] = p.read_text(encoding="utf-8")
-    return _cache[p]
+    return p.read_text(encoding="utf-8")
 
 
 def _extract_section(raw: str, lang: str) -> str:

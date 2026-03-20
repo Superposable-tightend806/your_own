@@ -105,7 +105,7 @@ async def import_chatgpt(
     Stream SSE: {"total": N, "done": M, "stage": "..."}  …  {"finished": true}
     """
     raw  = await file.read()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     async def event_stream():
         yield f"data: {json.dumps({'total': 0, 'done': 0, 'stage': 'parsing'})}\n\n"

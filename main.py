@@ -85,6 +85,11 @@ async def lifespan(app: FastAPI):
 
     reflection_task.cancel()
     scheduled_push_task.cancel()
+    for task in (reflection_task, scheduled_push_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     await preload_task
     logger.info("[shutdown] Your Own backend stopped")
 

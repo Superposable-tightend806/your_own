@@ -158,18 +158,6 @@ def _build_chroma_block(facts: list[dict], language: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _get_recent_workbench(account_id: str, max_entries: int = 5) -> str:
-    """Return last N workbench entries for injection into the system prompt."""
-    content = wb.read(account_id)
-    if not content:
-        return ""
-    entries = wb._parse_entries(content)
-    if not entries:
-        return ""
-    parts = []
-    for ts, body in entries[-max_entries:]:
-        parts.append(f"[{ts}] {body}")
-    return "\n---\n".join(parts)
 
 
 @router.get("/chat/history")
@@ -230,7 +218,8 @@ async def chat(
     srv = load_settings()
 
     api_key = api_key or srv.get("openrouter_api_key", "")
-    model = model or srv.get("model", "anthropic/claude-opus-4.6")
+    from infrastructure.settings_store import DEFAULT_MODEL
+    model = model or srv.get("model", DEFAULT_MODEL)
     if not system_prompt:
         system_prompt = load_soul() or None
 
@@ -382,7 +371,7 @@ async def chat(
     if current_user_text.strip():
         try:
             pipeline = get_chroma_pipeline()
-            chroma_facts = await asyncio.get_event_loop().run_in_executor(
+            chroma_facts = await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: pipeline.query_similar_multi(
                     account_id=account_id or "default",
@@ -415,7 +404,7 @@ async def chat(
     _now_str = now_local().strftime("%Y-%m-%d %H:%M")
 
     # Recent workbench entries for context
-    _recent_wb = _get_recent_workbench(account_id or "default")
+    _recent_wb = wb.get_recent_entries(account_id or "default")
     _workbench_block = (
         (
             "Твои последние записи из внутреннего журнала:\n" + _recent_wb + "\n\n"
@@ -738,20 +727,21 @@ async def chat(
                 await repo.bulk_save(assistant_rows)
 
             # Fire post-dialogue analysis in background (no delay for the user)
-            asyncio.create_task(_post_analyze_background(
+            _bg_task = asyncio.create_task(_post_analyze_background(
                 account_id=account_id or "default",
                 recent_pairs=recent_pairs,
                 current_user_text=current_user_text,
                 current_assistant_text=assistant_text,
                 api_key=api_key,
             ))
+            _bg_task.add_done_callback(lambda t: t.result() if not t.cancelled() and not t.exception() else None)
 
             # Update Chroma usage for retrieved facts
             if chroma_fact_ids:
                 try:
                     _chroma_pipeline = get_chroma_pipeline()
                     for fid in chroma_fact_ids:
-                        await asyncio.get_event_loop().run_in_executor(
+                        await asyncio.get_running_loop().run_in_executor(
                             None, lambda fid=fid: _chroma_pipeline.update_usage(fid)
                         )
                 except Exception as exc:

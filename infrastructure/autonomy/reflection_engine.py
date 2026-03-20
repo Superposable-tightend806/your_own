@@ -32,7 +32,6 @@ import aiohttp
 import json
 import logging
 import re
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,32 +40,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.autonomy import identity_memory as identity
 from infrastructure.autonomy import workbench as wb
-from infrastructure.autonomy.task_queue import (
-    cancel_duplicate_scheduled,
-    create_task,
-    get_pending_tasks,
-)
 from infrastructure.database.engine import get_db_session
-from infrastructure.database.models.autonomy_task import TriggerType
 from infrastructure.memory.chroma_pipeline import get_chroma_pipeline
 from infrastructure.llm.prompt_loader import get_prompt
 
+from infrastructure.autonomy.helpers import (
+    cancel_message,
+    detect_lang,
+    get_ai_name,
+    make_llm_client,
+    reschedule_message,
+    rewrite_message,
+    save_push_message,
+    schedule_message,
+    send_push_and_save,
+)
 from infrastructure.logging.logger import setup_logger
 logger = setup_logger("autonomy.reflection")
 
 _PROMPTS_DIR = "infrastructure/autonomy/prompts"
-
-
-def _make_client(api_key: str):
-    from infrastructure.llm.client import LLMClient
-    from infrastructure.settings_store import load_settings
-    s = load_settings()
-    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
-
-
-def _get_ai_name() -> str:
-    from infrastructure.settings_store import load_settings
-    return load_settings().get("ai_name", "") or "AI"
 
 
 BASE_STEPS = 8
@@ -115,7 +107,7 @@ def _set_last_reflection_ts() -> None:
 
 
 async def _complete(api_key: str, messages: list[dict], max_tokens: int = 2000) -> str:
-    client = _make_client(api_key)
+    client = make_llm_client(api_key)
     return await client.complete(messages, max_tokens=max_tokens, temperature=0.75)
 
 
@@ -282,45 +274,19 @@ async def _handle_command(
 
     elif cmd == "SEND_MESSAGE":
         msg_text = arg.strip()
-        from infrastructure.pushy.client import get_client
-        client = get_client()
-        if client:
-            await client.send(title=_get_ai_name(), body=msg_text)
-            logger.info("[reflection:%s] sent push: %s", account_id, msg_text[:80])
-        else:
-            logger.warning("[reflection] SEND_MESSAGE: Pushy not configured")
-        from infrastructure.memory.live_store import build_canonical_row
-        from infrastructure.database.repositories.message_repo import MessageRepository
-        row = build_canonical_row(
-            pair_id=uuid.uuid4(), account_id=account_id,
-            role="assistant", text=msg_text, source="push",
-        )
-        await MessageRepository(db).bulk_save([row])
-        _l = "ru" if re.search(r"[А-Яа-яЁё]", msg_text) else "en"
-        _pfx = "Написал ей" if _l == "ru" else "Sent message"
-        _preview = msg_text[:60] + ("…" if len(msg_text) > 60 else "")
-        wb.append(account_id, f"{_pfx}: «{_preview}»")
+        _l = detect_lang(msg_text)
+        await send_push_and_save(account_id=account_id, text=msg_text, lang=_l, log_prefix="reflection")
         return None
 
     elif cmd == "SCHEDULE_MESSAGE":
         if "|" in arg:
             ts_str, message = arg.split("|", 1)
             try:
-                from infrastructure.settings_store import local_to_utc
-                scheduled_at = local_to_utc(
-                    datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M")
+                _l = detect_lang(message)
+                await schedule_message(
+                    account_id=account_id, ts_str=ts_str, text=message,
+                    lang=_l, source="reflection", log_prefix="reflection",
                 )
-                await cancel_duplicate_scheduled(db, account_id, scheduled_at, "reflection")
-                payload = json.dumps({"message": message.strip(), "source": "reflection"})
-                await create_task(
-                    db, account_id=account_id, trigger_type=TriggerType.TIME,
-                    payload=payload, scheduled_at=scheduled_at,
-                )
-                logger.info("[reflection:%s] scheduled at %s", account_id, ts_str.strip())
-                _l = "ru" if re.search(r"[А-Яа-яЁё]", message) else "en"
-                _pfx = "Запланировал сообщение на" if _l == "ru" else "Scheduled message for"
-                _preview = message.strip()[:60] + ("…" if len(message.strip()) > 60 else "")
-                wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{_preview}»")
             except ValueError:
                 logger.warning("[reflection] bad SCHEDULE_MESSAGE ts: %r", ts_str)
         return None
@@ -328,17 +294,8 @@ async def _handle_command(
     elif cmd == "CANCEL_MESSAGE":
         ts_str = arg.strip()
         try:
-            from infrastructure.settings_store import local_to_utc
-            from infrastructure.autonomy.task_queue import cancel_task_by_time
-            scheduled_at = local_to_utc(
-                datetime.strptime(ts_str, "%Y-%m-%d %H:%M")
-            )
-            found = await cancel_task_by_time(db, account_id, scheduled_at)
-            logger.info("[reflection:%s] CANCEL_MESSAGE %s found=%s", account_id, ts_str, found)
-            _l = "ru" if re.search(r"[А-Яа-яЁё]", ts_str) else "ru"
-            if found:
-                wb.append(account_id, f"Отменил сообщение на {ts_str}")
-            else:
+            found = await cancel_message(account_id=account_id, ts_str=ts_str, lang="ru", log_prefix="reflection")
+            if not found:
                 return f"Сообщение на {ts_str} не найдено (уже отправлено или не существует)."
         except ValueError:
             logger.warning("[reflection] bad CANCEL_MESSAGE ts: %r", ts_str)
@@ -348,25 +305,11 @@ async def _handle_command(
         if "->" in arg:
             old_ts_str, new_ts_str = arg.split("->", 1)
             try:
-                from infrastructure.settings_store import local_to_utc
-                from infrastructure.autonomy.task_queue import reschedule_task
-                old_utc = local_to_utc(
-                    datetime.strptime(old_ts_str.strip(), "%Y-%m-%d %H:%M")
+                found = await reschedule_message(
+                    account_id=account_id, old_ts_str=old_ts_str,
+                    new_ts_str=new_ts_str, lang="ru", log_prefix="reflection",
                 )
-                new_utc = local_to_utc(
-                    datetime.strptime(new_ts_str.strip(), "%Y-%m-%d %H:%M")
-                )
-                found = await reschedule_task(db, account_id, old_utc, new_utc)
-                logger.info(
-                    "[reflection:%s] RESCHEDULE_MESSAGE %s -> %s found=%s",
-                    account_id, old_ts_str.strip(), new_ts_str.strip(), found,
-                )
-                if found:
-                    wb.append(
-                        account_id,
-                        f"Перенёс сообщение с {old_ts_str.strip()} на {new_ts_str.strip()}",
-                    )
-                else:
+                if not found:
                     return f"Сообщение на {old_ts_str.strip()} не найдено (уже отправлено или не существует)."
             except ValueError:
                 logger.warning("[reflection] bad RESCHEDULE_MESSAGE: %r", arg)
@@ -376,17 +319,11 @@ async def _handle_command(
         if "|" in arg:
             ts_str, new_text = arg.split("|", 1)
             try:
-                from infrastructure.settings_store import local_to_utc
-                from infrastructure.autonomy.task_queue import rewrite_task
-                scheduled_at = local_to_utc(
-                    datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M")
+                found = await rewrite_message(
+                    account_id=account_id, ts_str=ts_str,
+                    new_text=new_text, lang="ru", log_prefix="reflection",
                 )
-                found = await rewrite_task(db, account_id, scheduled_at, new_text.strip())
-                logger.info("[reflection:%s] REWRITE_MESSAGE %s found=%s", account_id, ts_str.strip(), found)
-                if found:
-                    _preview = new_text.strip()[:60] + ("…" if len(new_text.strip()) > 60 else "")
-                    wb.append(account_id, f"Переписал сообщение на {ts_str.strip()}: «{_preview}»")
-                else:
+                if not found:
                     return f"Сообщение на {ts_str.strip()} не найдено (уже отправлено или не существует)."
             except ValueError:
                 logger.warning("[reflection] bad REWRITE_MESSAGE: %r", arg)
@@ -397,8 +334,6 @@ async def _handle_command(
 
 # ── Prompt templates ──────────────────────────────────────────────────────────
 
-def _detect_lang(text: str) -> str:
-    return "ru" if re.search(r"[А-Яа-яЁё]", text or "") else "en"
 
 
 def _build_awakening_system(
@@ -516,7 +451,7 @@ async def run(account_id: str, api_key: str) -> None:
     settings = load_settings()
     cooldown_h = int(settings.get("reflection_cooldown_hours", 4))
     interval_h = int(settings.get("reflection_interval_hours", 12))
-    ai_name = _get_ai_name()
+    ai_name = get_ai_name()
 
     async with get_db_session() as db:
         from infrastructure.database.repositories.message_repo import MessageRepository
@@ -536,7 +471,7 @@ async def run(account_id: str, api_key: str) -> None:
             logger.warning("[reflection] recent pairs error: %s", exc)
             recent_dialogue = ""
 
-        lang = _detect_lang(recent_dialogue)
+        lang = detect_lang(recent_dialogue)
         if not recent_dialogue:
             recent_dialogue = "(нет недавнего диалога)" if lang == "ru" else "(no recent dialogue)"
 

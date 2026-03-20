@@ -18,36 +18,16 @@ System prompt review is intentionally omitted.
 from __future__ import annotations
 
 import logging
-import re
 
 from infrastructure.autonomy import identity_memory as identity
 from infrastructure.autonomy import workbench as wb
+from infrastructure.autonomy.helpers import detect_lang, get_ai_name, make_llm_client
 from infrastructure.memory.chroma_pipeline import get_chroma_pipeline
 from infrastructure.llm.prompt_loader import get_prompt
 
 logger = logging.getLogger("autonomy.rotator")
 
 _PROMPTS_DIR = "infrastructure/autonomy/prompts"
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _make_client(api_key: str):
-    from infrastructure.llm.client import LLMClient
-    from infrastructure.settings_store import load_settings
-    s = load_settings()
-    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
-
-
-def _get_ai_name() -> str:
-    from infrastructure.settings_store import load_settings
-    return load_settings().get("ai_name", "") or "AI"
-
-
-def _detect_lang(text: str) -> str:
-    if re.search(r"[А-Яа-яЁё]", text or ""):
-        return "ru"
-    return "en"
 
 
 async def _complete(
@@ -57,7 +37,7 @@ async def _complete(
     temperature: float = 0.4,
     max_tokens: int = 600,
 ) -> str:
-    client = _make_client(api_key)
+    client = make_llm_client(api_key)
     return await client.complete(
         messages=[
             {"role": "system", "content": system},
@@ -105,7 +85,7 @@ async def _extract_self_insights(
     """LLM extracts self-insights from rotated notes → stores in key_info Chroma."""
     from infrastructure.settings_store import load_soul
 
-    ai_name = _get_ai_name()
+    ai_name = get_ai_name()
     soul = load_soul() or ""
     user_prompt = get_prompt(
         f"{_PROMPTS_DIR}/rotator_insight.md",
@@ -215,7 +195,7 @@ async def _consolidate_identity(
 
     updated = False
     full_identity = identity.read(account_id)
-    ai_name = _get_ai_name()
+    ai_name = get_ai_name()
     notes = notes_block or ("(нет свежих заметок)" if lang == "ru" else "(no recent notes)")
 
     for section in sections_to_consolidate:
@@ -292,7 +272,7 @@ async def run(account_id: str, api_key: str) -> dict:
     result["rotated"] = len(stale)
     if not stale:
         # Still run consolidation even when nothing rotated
-        lang = _detect_lang(identity.read(account_id))
+        lang = detect_lang(identity.read(account_id))
         result["consolidated"] = await _consolidate_identity(account_id, api_key, lang, notes_block="")
         return result
 
@@ -300,7 +280,7 @@ async def run(account_id: str, api_key: str) -> dict:
         f"[{ts}]\n{text}" for ts, text in stale
     )
 
-    lang = _detect_lang(notes_block)
+    lang = detect_lang(notes_block)
 
     # Step 2: extract self-insights
     try:

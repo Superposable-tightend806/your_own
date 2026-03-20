@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Optional
 
+from infrastructure.autonomy.helpers import make_llm_client
 from infrastructure.llm.prompt_loader import get_prompt
 
 logger = logging.getLogger(__name__)
@@ -22,17 +23,10 @@ logger = logging.getLogger(__name__)
 _PROMPTS_DIR = "infrastructure/memory/prompts"
 
 
-def _make_client(api_key: str):
-    from infrastructure.llm.client import LLMClient
-    from infrastructure.settings_store import load_settings
-    s = load_settings()
-    return LLMClient(api_key=api_key, model=s.get("model", "anthropic/claude-opus-4.6"))
-
-
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
 async def _complete(api_key: str, system: str, user: str) -> str:
-    client = _make_client(api_key)
+    client = make_llm_client(api_key)
     return await client.complete(
         messages=[
             {"role": "system", "content": system},

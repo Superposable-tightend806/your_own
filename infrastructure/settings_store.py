@@ -16,9 +16,11 @@ _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 _SETTINGS_FILE = _DATA_DIR / "settings.json"
 _SOUL_FILE = _DATA_DIR / "soul.md"
 
+DEFAULT_MODEL = "anthropic/claude-opus-4.6"
+
 _DEFAULTS: dict[str, object] = {
     "openrouter_api_key": "",
-    "model": "anthropic/claude-opus-4.6",
+    "model": DEFAULT_MODEL,
     "temperature": 0.7,
     "top_p": 0.9,
     "history_pairs": 6,

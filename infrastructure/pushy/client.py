@@ -46,12 +46,6 @@ class PushyClient:
         payload: dict[str, Any] = {
             "to": self.device_token,
             "data": data or {"title": title, "message": body},
-            "notification": {
-                "title": title,
-                "body": body,
-                "badge": 1,
-                "sound": "default",
-            },
         }
 
         url = f"{_PUSHY_API_URL}?api_key={self.api_key}"

@@ -114,7 +114,8 @@ async def trigger_reflection(_token: str = Depends(require_auth)):
         api_key = load_settings().get("openrouter_api_key", "")
         if not api_key:
             return {"ok": False, "error": "no_api_key"}
-        asyncio.create_task(_reflect("default", api_key))
+        task = asyncio.create_task(_reflect("default", api_key))
+        task.add_done_callback(lambda t: t.result() if not t.cancelled() and not t.exception() else None)
         return {"ok": True, "message": "reflection started"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -128,9 +129,9 @@ async def workbench_latest(
     _token: str = Depends(require_auth),
 ):
     """Return the most recent workbench note for the given account."""
-    from infrastructure.autonomy.workbench import read as wb_read, _parse_entries
+    from infrastructure.autonomy.workbench import read as wb_read, parse_entries
     content = wb_read(account_id)
-    entries = _parse_entries(content) if content else []
+    entries = parse_entries(content) if content else []
     if not entries:
         return {"ts": None, "text": None}
     ts, text = entries[-1]

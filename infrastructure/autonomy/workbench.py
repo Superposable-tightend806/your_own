@@ -31,7 +31,7 @@ def _path(account_id: str) -> Path:
     return p / "workbench.md"
 
 
-def _parse_entries(content: str) -> list[tuple[str, str]]:
+def parse_entries(content: str) -> list[tuple[str, str]]:
     """Parse workbench entries supporting both ``### ts`` and ``---/[ts UTC]`` formats.
 
     Returns list of ``(timestamp_str, body_text)`` in file order.
@@ -101,12 +101,27 @@ def read(account_id: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def get_recent_entries(account_id: str, max_entries: int = 5, empty_label: str = "") -> str:
+    """Return the last *max_entries* workbench entries formatted as ``[ts] body``.
+
+    Returns *empty_label* (default ``""``) when there are no entries.
+    """
+    content = read(account_id)
+    if not content:
+        return empty_label
+    entries = parse_entries(content)
+    if not entries:
+        return empty_label
+    parts = [f"[{ts}] {body}" for ts, body in entries[-max_entries:]]
+    return "\n---\n".join(parts)
+
+
 def search(account_id: str, query: str) -> str:
     """Simple keyword search across workbench notes. Returns matching blocks."""
     content = read(account_id)
     if not content:
         return "(workbench is empty)"
-    entries = _parse_entries(content)
+    entries = parse_entries(content)
     if not entries:
         return "(workbench is empty)"
     query_lower = query.lower()
@@ -129,7 +144,7 @@ def get_stale_entries(account_id: str) -> list[tuple[str, str]]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
     stale: list[tuple[str, str]] = []
 
-    for ts_str, body in _parse_entries(content):
+    for ts_str, body in parse_entries(content):
         try:
             ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
         except ValueError:
@@ -147,7 +162,7 @@ def remove_stale(account_id: str) -> None:
         return
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
-    entries = _parse_entries(content)
+    entries = parse_entries(content)
 
     kept: list[tuple[str, str]] = []
     for ts_str, body in entries:
