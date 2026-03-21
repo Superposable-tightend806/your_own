@@ -1,6 +1,7 @@
 /**
  * Settings screen — manages server connection and AI settings.
  */
+import Slider from "@react-native-community/slider";
 import { useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
@@ -29,6 +30,7 @@ import {
 } from "@/lib/api";
 import type { Settings } from "@/lib/types";
 import { getStoredDeviceToken, setupPushNotifications } from "@/lib/push";
+import { DEFAULT_SOUND_VOLUME, loadSoundVolume, saveSoundVolume, soundEngine } from "@/lib/soundEngine";
 
 function Row({ label, value, onChangeText, secure = false, placeholder = "", editable = true }: {
   label: string;
@@ -69,6 +71,9 @@ export default function SettingsScreen() {
   const [aiName, setAiName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
+
+  // Sound
+  const [soundVolume, setSoundVolume] = useState(DEFAULT_SOUND_VOLUME);
 
   // Pushy
   const [pushyApiKey, setPushyApiKey] = useState("");
@@ -112,6 +117,9 @@ export default function SettingsScreen() {
       } else {
         setConnected(false);
       }
+
+      const vol = await loadSoundVolume();
+      setSoundVolume(vol);
     })();
   }, []);
 
@@ -216,6 +224,36 @@ export default function SettingsScreen() {
 
           <View style={sty.divider} />
 
+          {/* Sound */}
+          <Text style={sty.section}>Keyboard Sound</Text>
+          <View style={sty.row}>
+            <View style={sty.sliderLabelRow}>
+              <Text style={sty.rowLabel}>Volume</Text>
+              <Text style={sty.sliderValue}>
+                {soundVolume === 0 ? "off" : `${Math.round(soundVolume * 100)}%`}
+              </Text>
+            </View>
+            <Slider
+              style={sty.slider}
+              minimumValue={0}
+              maximumValue={1}
+              step={0.05}
+              value={soundVolume}
+              minimumTrackTintColor="rgba(255,255,255,0.6)"
+              maximumTrackTintColor="rgba(255,255,255,0.12)"
+              thumbTintColor="rgba(255,255,255,0.85)"
+              onValueChange={(v) => {
+                setSoundVolume(v);
+                soundEngine.setVolume(v);
+              }}
+              onSlidingComplete={(v) => {
+                saveSoundVolume(v).catch(() => {});
+              }}
+            />
+          </View>
+
+          <View style={sty.divider} />
+
           <TouchableOpacity style={sty.savebtn} onPress={handleSave} disabled={saving || !connected}>
             {saving ? (
               <ActivityIndicator color="#fff" />
@@ -274,6 +312,9 @@ const sty = StyleSheet.create({
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   divider: { height: 1, backgroundColor: "rgba(255,255,255,0.08)", marginVertical: 24 },
+  sliderLabelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  sliderValue: { color: "rgba(255,255,255,0.5)", fontSize: 11, letterSpacing: 1 },
+  slider: { width: "100%", height: 32 },
   btn: {
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.2)",

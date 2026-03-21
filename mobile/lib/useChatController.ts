@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Clipboard from "expo-clipboard";
 import * as ImagePicker from "expo-image-picker";
 
-import { apiFetch, apiFetchStreaming, getBackendUrl, loadSettings, loadWorkbenchLatest } from "@/lib/api";
+import { apiFetch, apiFetchStreaming, deleteChatPair, getBackendUrl, loadSettings, loadWorkbenchLatest } from "@/lib/api";
 import { parseChatSseEvent, splitSseBuffer } from "@/lib/chatSse";
+import { loadSoundVolume, soundEngine } from "@/lib/soundEngine";
 import type { DraftAttachment, HistoryPair, Message } from "@/lib/types";
 
 const HISTORY_BATCH = 25;
@@ -26,6 +28,7 @@ function pairToMessages(pair: HistoryPair, baseUrl: string): Message[] {
         .filter(Boolean)
     : undefined;
 
+  const ts = pair.pair_created_at ?? pair.created_at ?? undefined;
   const out: Message[] = [];
   if (pair.user_text || pair.user_image_urls?.length) {
     out.push({
@@ -34,6 +37,7 @@ function pairToMessages(pair: HistoryPair, baseUrl: string): Message[] {
       content: pair.user_text ?? "",
       pairId: pair.pair_id,
       imageUrls: userImageUrls,
+      createdAt: ts,
     });
   }
   if (pair.assistant_text) {
@@ -42,6 +46,7 @@ function pairToMessages(pair: HistoryPair, baseUrl: string): Message[] {
       role: "assistant",
       content: pair.assistant_text,
       pairId: pair.pair_id,
+      createdAt: ts,
     });
   }
   return out;
@@ -51,6 +56,7 @@ export function useChatController() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -65,6 +71,7 @@ export function useChatController() {
   const chunkBufRef = useRef("");
   const rafRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
+  const activePairIdRef = useRef<string | null>(null);
   const loadingHistoryRef = useRef(false);
 
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
@@ -158,6 +165,15 @@ export function useChatController() {
         if (result.text) setWorkbenchText(result.text);
       })
       .catch(() => {});
+
+    // Load sound engine with persisted volume
+    loadSoundVolume()
+      .then((vol) => soundEngine.load(vol))
+      .catch(() => {});
+
+    return () => {
+      soundEngine.unload().catch(() => {});
+    };
   }, [loadHistory]);
 
   const pickImages = useCallback(async () => {
@@ -226,11 +242,13 @@ export function useChatController() {
     const serverUrls = uploaded.map((attachment) => attachment.serverUrl!);
     const resolvedBackendUrl = backendUrl || (await getBackendUrl()).replace(/\/$/, "");
     const fullImageUrls = serverUrls.map((uri) => (uri.startsWith("http") ? uri : `${resolvedBackendUrl}${uri}`));
+    const now = new Date().toISOString();
     const userMessage: Message = {
       id: userMessageId,
       role: "user",
       content: text,
       imageUrls: fullImageUrls.length ? fullImageUrls : undefined,
+      createdAt: now,
     };
 
     setMessages((prev) => [
@@ -242,6 +260,7 @@ export function useChatController() {
     setAttachments([]);
     setStreaming(true);
     activeAssistantIdRef.current = assistantMessageId;
+    activePairIdRef.current = null;
 
     try {
       abortRef.current = new AbortController();
@@ -290,8 +309,14 @@ export function useChatController() {
           if (!event) continue;
 
           if (event.type === "done") {
+            soundEngine.endMessage();
             streamDone = true;
             break;
+          }
+
+          if (event.type === "pair_id") {
+            activePairIdRef.current = event.pairId;
+            continue;
           }
 
           if (event.type === "skip") continue;
@@ -341,6 +366,7 @@ export function useChatController() {
           }
 
           chunkBufRef.current += event.chunk;
+          soundEngine.feed(event.chunk);
           scheduleFlush();
         }
       }
@@ -349,11 +375,28 @@ export function useChatController() {
     } catch (error: unknown) {
       if (error instanceof Error && error.name === "AbortError") return;
       flushNow();
-      const errMsg = error instanceof Error ? error.message : String(error);
-      updateMessageById(assistantMessageId, (message) => ({
-        ...message,
-        content: errMsg.includes("Auth failed") ? errMsg : `[connection error: ${errMsg}]`,
-      }));
+
+      // Remove both messages from UI
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== userMessageId && m.id !== assistantMessageId),
+      );
+
+      // Try to delete from backend DB (best-effort, don't await result)
+      // activePairIdRef is set from the first SSE event, so we always have the correct pair
+      const pairId = activePairIdRef.current;
+      if (pairId) {
+        deleteChatPair(pairId).catch(() => {});
+        activePairIdRef.current = null;
+      }
+
+      // Copy user text to clipboard so nothing is lost
+      if (text) {
+        Clipboard.setStringAsync(text).catch(() => {});
+      }
+
+      // Ambient error notice — auto-clears after 4s
+      setErrorNotice("connection error — your message was copied");
+      setTimeout(() => setErrorNotice(null), 4000);
     } finally {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
@@ -361,6 +404,7 @@ export function useChatController() {
       }
       chunkBufRef.current = "";
       activeAssistantIdRef.current = null;
+      activePairIdRef.current = null;
       setStreaming(false);
       abortRef.current = null;
     }
@@ -393,6 +437,7 @@ export function useChatController() {
     backendUrl,
     canAttach,
     canSend,
+    errorNotice,
     hasMore,
     initialLoaded,
     input,

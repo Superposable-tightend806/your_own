@@ -1,5 +1,5 @@
-import React, { useCallback, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, Text, View, type ScrollViewProps } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Animated, FlatList, StyleSheet, Text, View, type ScrollViewProps } from "react-native";
 import { Stack } from "expo-router";
 import {
   KeyboardChatScrollView,
@@ -42,6 +42,7 @@ export default function ChatScreen() {
     backendUrl,
     canAttach,
     canSend,
+    errorNotice,
     initialLoaded,
     input,
     loadingHistory,
@@ -55,6 +56,18 @@ export default function ChatScreen() {
     stopStreaming,
     loadMore,
   } = useChatController();
+
+  // Ambient error fade
+  const errorOpacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (errorNotice) {
+      Animated.sequence([
+        Animated.timing(errorOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+        Animated.delay(2800),
+        Animated.timing(errorOpacity, { toValue: 0, duration: 600, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [errorNotice, errorOpacity]);
 
   const renderScrollComponent = useCallback(
     (props: ScrollViewProps) => <ChatScrollView {...props} />,
@@ -109,6 +122,11 @@ export default function ChatScreen() {
       />
 
       <KeyboardStickyView style={styles.stickyInput}>
+        {errorNotice ? (
+          <Animated.View style={[styles.errorBanner, { opacity: errorOpacity }]}>
+            <Text style={styles.errorText}>{errorNotice}</Text>
+          </Animated.View>
+        ) : null}
         <ChatComposer
           input={input}
           onChangeInput={setInput}
@@ -139,4 +157,15 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   stickyInput: { backgroundColor: "#000" },
+  errorBanner: {
+    paddingHorizontal: 20,
+    paddingVertical: 7,
+  },
+  errorText: {
+    color: "rgba(255,255,255,0.25)",
+    fontSize: 10,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    textAlign: "center",
+  },
 });

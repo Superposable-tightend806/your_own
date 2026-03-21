@@ -79,6 +79,15 @@ class MessageRepository:
 
         await self._session.commit()
 
+    async def delete_pair(self, pair_id: str) -> int:
+        """Delete all rows belonging to a pair_id. Returns number of deleted rows."""
+        result = await self._session.execute(
+            text("DELETE FROM messages WHERE pair_id = :pair_id"),
+            {"pair_id": pair_id},
+        )
+        await self._session.commit()
+        return result.rowcount or 0
+
     async def delete_import_rows(self, account_id: str) -> int:
         result = await self._session.execute(
             text(

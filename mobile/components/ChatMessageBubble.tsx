@@ -1,11 +1,22 @@
-import React, { useMemo } from "react";
-import { StyleSheet, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import React, { useCallback, useMemo, useState } from "react";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
-import MessageContent from "@/components/MessageContent";
 import ChatMessageImages from "@/components/ChatMessageImages";
 import ChatMessageMemory from "@/components/ChatMessageMemory";
-import type { Message } from "@/lib/types";
+import MessageContent from "@/components/MessageContent";
 import { resolveChatImageUri } from "@/lib/chatImages";
+import type { Message } from "@/lib/types";
+
+function formatTime(iso?: string): string | null {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return null;
+  }
+}
 
 export default React.memo(function ChatMessageBubble({
   msg,
@@ -17,6 +28,8 @@ export default React.memo(function ChatMessageBubble({
   backendUrl: string;
 }) {
   const isUser = msg.role === "user";
+  const [copied, setCopied] = useState(false);
+
   const imageUrls = useMemo(
     () =>
       (msg.imageUrls ?? (msg.imageUrl ? [msg.imageUrl] : []))
@@ -24,12 +37,21 @@ export default React.memo(function ChatMessageBubble({
     [backendUrl, msg.imageUrl, msg.imageUrls],
   );
   const hasMemory = !isUser && (msg.chromaFacts?.length ?? 0) > 0;
+  const timeLabel = useMemo(() => formatTime(msg.createdAt), [msg.createdAt]);
+  const hasContent = Boolean(msg.content) || (msg.role === "assistant" && isStreamingLast);
+
+  const handleCopy = useCallback(async () => {
+    if (!msg.content) return;
+    await Clipboard.setStringAsync(msg.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  }, [msg.content]);
 
   return (
     <View style={[s.wrap, isUser ? s.wrapRight : s.wrapLeft]}>
       <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleAssistant]}>
         <ChatMessageImages imageUrls={imageUrls} backendUrl={backendUrl} />
-        {(msg.content || (msg.role === "assistant" && isStreamingLast)) ? (
+        {hasContent ? (
           <MessageContent
             content={msg.content}
             role={msg.role}
@@ -39,6 +61,25 @@ export default React.memo(function ChatMessageBubble({
           />
         ) : null}
       </View>
+
+      {/* Footer: time + copy */}
+      <View style={[s.footer, isUser ? s.footerRight : s.footerLeft]}>
+        {timeLabel ? (
+          <Text style={s.time}>{timeLabel}</Text>
+        ) : null}
+        {hasContent && !isStreamingLast ? (
+          <Pressable
+            onPress={handleCopy}
+            hitSlop={8}
+            style={({ pressed }) => [s.copyBtn, pressed && s.copyBtnPressed]}
+          >
+            <Text style={[s.copyText, copied && s.copyTextDone]}>
+              {copied ? "copied" : "copy"}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+
       {hasMemory ? <ChatMessageMemory chromaFacts={msg.chromaFacts ?? []} /> : null}
     </View>
   );
@@ -55,4 +96,29 @@ const s = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.12)",
   },
   bubbleAssistant: { backgroundColor: "transparent" },
+  footer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 5,
+    gap: 10,
+  },
+  footerRight: { justifyContent: "flex-end" },
+  footerLeft: { justifyContent: "flex-start" },
+  time: {
+    color: "rgba(255,255,255,0.2)",
+    fontSize: 10,
+    letterSpacing: 0.5,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  copyBtn: { paddingVertical: 2 },
+  copyBtnPressed: { opacity: 0.5 },
+  copyText: {
+    color: "rgba(255,255,255,0.2)",
+    fontSize: 10,
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+  },
+  copyTextDone: {
+    color: "rgba(120,220,120,0.5)",
+  },
 });

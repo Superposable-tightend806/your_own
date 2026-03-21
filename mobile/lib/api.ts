@@ -144,6 +144,11 @@ export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   await apiPut<unknown>("/api/settings", patch);
 }
 
+/** Delete a chat pair from the backend DB by pair_id. Best-effort. */
+export async function deleteChatPair(pairId: string): Promise<void> {
+  await apiFetch(`/api/chat/pair/${pairId}`, { method: "DELETE" });
+}
+
 /** Return the latest workbench note (stripped of markdown). */
 export async function loadWorkbenchLatest(
   accountId = "default",

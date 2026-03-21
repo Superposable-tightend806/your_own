@@ -47,18 +47,19 @@ export async function setupPushNotifications(): Promise<void> {
     const Pushy = (await import("pushy-react-native")).default;
 
     if (!_listenersSet) {
-      Pushy.setNotificationListener((data: Record<string, string>) => {
-        console.log("[push] received:", data);
-        _emit(data);
+      Pushy.setNotificationListener(async (data: string | object) => {
+        const d = data as Record<string, string>;
+        console.log("[push] received:", d);
+        _emit(d);
 
         // Display a system notification (sound + shade) on Android
-        const body = data.message || data.body || "";
+        const body = d.message || d.body || "";
         if (body) {
-          Pushy.notify(data.title || "", body, data);
+          Pushy.notify(d.title || "", body, d);
         }
       });
 
-      Pushy.setNotificationClickListener((data: Record<string, string>) => {
+      Pushy.setNotificationClickListener((data: string | object) => {
         console.log("[push] tapped:", data);
         import("expo-router").then(({ router }) => {
           router.push("/chat");

@@ -160,6 +160,17 @@ def _build_chroma_block(facts: list[dict], language: str) -> str:
 
 
 
+@router.delete("/chat/pair/{pair_id}")
+async def delete_chat_pair(
+    pair_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all messages belonging to a pair_id. Used by client for error cleanup."""
+    repo = MessageRepository(db)
+    deleted = await repo.delete_pair(pair_id)
+    return {"deleted": deleted}
+
+
 @router.get("/chat/history")
 async def chat_history(
     account_id: str = Query("default"),
@@ -489,6 +500,9 @@ async def chat(
     )
 
     async def event_stream():
+        # Always emit pair_id first so the client can clean up on error
+        yield f"event: pair_id\ndata: {json.dumps({'pair_id': str(pair_id)})}\n\n"
+
         if upload_urls and not images_from_urls:
             yield "event: image_urls\n"
             yield f"data: {json.dumps({'urls': upload_urls})}\n\n"

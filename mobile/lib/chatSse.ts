@@ -2,6 +2,7 @@ import type { ChromaFact } from "@/lib/types";
 
 export type ChatSseEvent =
   | { type: "done" }
+  | { type: "pair_id"; pairId: string }
   | { type: "text"; chunk: string }
   | { type: "rewrite"; text: string }
   | { type: "memory"; chromaFacts: ChromaFact[] }
@@ -42,6 +43,15 @@ export function parseChatSseEvent(rawEvent: string): ChatSseEvent | null {
 
   const payload = dataLines.join("\n");
   if (payload === "[DONE]") return { type: "done" };
+
+  if (eventType === "pair_id") {
+    try {
+      const parsed = JSON.parse(payload) as { pair_id?: string };
+      if (parsed.pair_id) return { type: "pair_id", pairId: parsed.pair_id };
+    } catch {
+      return null;
+    }
+  }
 
   if (eventType === "rewrite") {
     try {
