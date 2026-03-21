@@ -60,11 +60,11 @@ def _format_history(
 
 
 
-def _identity_excerpt(account_id: str, max_chars: int = 500) -> str:
+def _identity_excerpt(account_id: str) -> str:
     content = identity.read(account_id)
     if not content:
         return "(не заполнено)"
-    return content[:max_chars]
+    return content
 
 
 async def _build_pending_pushes_block(account_id: str) -> str:
