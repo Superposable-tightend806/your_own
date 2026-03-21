@@ -63,9 +63,8 @@ async def send_push_and_save(
     lang: str,
     log_prefix: str = "autonomy",
 ) -> None:
-    """Send a push notification, persist the message, and log to workbench."""
+    """Send a push notification and persist the message."""
     from infrastructure.pushy.client import get_client
-    from infrastructure.autonomy import workbench as wb
 
     client = get_client()
     if client:
@@ -74,9 +73,6 @@ async def send_push_and_save(
     else:
         logger.warning("[%s] SEND_MESSAGE: Pushy not configured", log_prefix)
     await save_push_message(account_id=account_id, text=text)
-    _pfx = "Написал ей" if lang == "ru" else "Sent message"
-    _preview = text[:60] + ("…" if len(text) > 60 else "")
-    wb.append(account_id, f"{_pfx}: «{_preview}»")
 
 
 async def schedule_message(
@@ -88,12 +84,11 @@ async def schedule_message(
     source: str,
     log_prefix: str = "autonomy",
 ) -> None:
-    """Parse timestamp, cancel duplicates, create a scheduled task, log to workbench."""
+    """Parse timestamp, cancel duplicates, create a scheduled task."""
     from infrastructure.database.engine import get_db_session
     from infrastructure.autonomy.task_queue import cancel_duplicate_scheduled, create_task
     from infrastructure.database.models.autonomy_task import TriggerType
     from infrastructure.settings_store import local_to_utc
-    from infrastructure.autonomy import workbench as wb
 
     scheduled_at = local_to_utc(datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M"))
     async with get_db_session() as db:
@@ -107,9 +102,6 @@ async def schedule_message(
             scheduled_at=scheduled_at,
         )
     logger.info("[%s:%s] scheduled message at %s", log_prefix, account_id, ts_str.strip())
-    _pfx = "Запланировал сообщение на" if lang == "ru" else "Scheduled message for"
-    _preview = text.strip()[:60] + ("…" if len(text.strip()) > 60 else "")
-    wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{_preview}»")
 
 
 async def cancel_message(
@@ -123,15 +115,11 @@ async def cancel_message(
     from infrastructure.database.engine import get_db_session
     from infrastructure.autonomy.task_queue import cancel_task_by_time
     from infrastructure.settings_store import local_to_utc
-    from infrastructure.autonomy import workbench as wb
 
     scheduled_at = local_to_utc(datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M"))
     async with get_db_session() as db:
         found = await cancel_task_by_time(db, account_id, scheduled_at)
     logger.info("[%s:%s] CANCEL_MESSAGE %s found=%s", log_prefix, account_id, ts_str, found)
-    if found:
-        _pfx = "Отменил сообщение на" if lang == "ru" else "Cancelled message for"
-        wb.append(account_id, f"{_pfx} {ts_str.strip()}")
     return found
 
 
@@ -147,17 +135,12 @@ async def reschedule_message(
     from infrastructure.database.engine import get_db_session
     from infrastructure.autonomy.task_queue import reschedule_task
     from infrastructure.settings_store import local_to_utc
-    from infrastructure.autonomy import workbench as wb
 
     old_utc = local_to_utc(datetime.strptime(old_ts_str.strip(), "%Y-%m-%d %H:%M"))
     new_utc = local_to_utc(datetime.strptime(new_ts_str.strip(), "%Y-%m-%d %H:%M"))
     async with get_db_session() as db:
         found = await reschedule_task(db, account_id, old_utc, new_utc)
     logger.info("[%s:%s] RESCHEDULE_MESSAGE %s -> %s found=%s", log_prefix, account_id, old_ts_str.strip(), new_ts_str.strip(), found)
-    if found:
-        _pfx = "Перенёс сообщение с" if lang == "ru" else "Rescheduled message from"
-        _mid = "на" if lang == "ru" else "to"
-        wb.append(account_id, f"{_pfx} {old_ts_str.strip()} {_mid} {new_ts_str.strip()}")
     return found
 
 
@@ -173,14 +156,9 @@ async def rewrite_message(
     from infrastructure.database.engine import get_db_session
     from infrastructure.autonomy.task_queue import rewrite_task
     from infrastructure.settings_store import local_to_utc
-    from infrastructure.autonomy import workbench as wb
 
     scheduled_at = local_to_utc(datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M"))
     async with get_db_session() as db:
         found = await rewrite_task(db, account_id, scheduled_at, new_text.strip())
     logger.info("[%s:%s] REWRITE_MESSAGE %s found=%s", log_prefix, account_id, ts_str.strip(), found)
-    if found:
-        _pfx = "Переписал сообщение на" if lang == "ru" else "Rewrote message for"
-        _preview = new_text.strip()[:60] + ("…" if len(new_text.strip()) > 60 else "")
-        wb.append(account_id, f"{_pfx} {ts_str.strip()}: «{_preview}»")
     return found

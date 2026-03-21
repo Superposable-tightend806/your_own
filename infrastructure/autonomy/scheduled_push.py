@@ -3,18 +3,20 @@
 For each due AutonomyTask (trigger_type=TIME, status=PENDING, scheduled_at <= now):
 
 Phase 1 — Mark as DONE in DB immediately (prevents double-delivery).
-Phase 2 — Send via Pushy.
-Phase 3 — Save the sent message to the messages table (visible in chat).
+Phase 2 — Validate with LLM (may rewrite or cancel).
+Phase 3 — Send via Pushy.
+Phase 4 — Save the sent message to the messages table (visible in chat).
 
 This ensures exactly-once delivery even if the worker crashes mid-flight:
-if the process dies after Phase 1 but before Phase 2 the task stays DONE
+if the process dies after Phase 1 but before Phase 3 the task stays DONE
 (not re-queued) and we simply miss that push — acceptable for a personal AI.
 """
 from __future__ import annotations
 
 import json
 
-from infrastructure.autonomy.helpers import detect_lang, get_ai_name, save_push_message
+from infrastructure.autonomy.helpers import get_ai_name, save_push_message
+from infrastructure.autonomy.push_validator import ValidatorAction, validate_scheduled_push
 from infrastructure.database.engine import get_db_session
 
 from infrastructure.logging.logger import setup_logger
@@ -76,7 +78,37 @@ async def run_due(account_id: str) -> None:
                 task.id, source, message[:80],
             )
 
-            # Phase 2: send via Pushy
+            # Phase 2: LLM validation — may rewrite or cancel before delivery
+            api_key = settings.get("openrouter_api_key", "")
+            if api_key:
+                try:
+                    validation = await validate_scheduled_push(
+                        account_id=account_id,
+                        message=message,
+                        api_key=api_key,
+                    )
+                    if validation.action == ValidatorAction.CANCEL:
+                        logger.info("[scheduled_push] task_id=%s CANCELLED by validator", task.id)
+                        continue
+                    if validation.action == ValidatorAction.REWRITE:
+                        logger.info(
+                            "[scheduled_push] task_id=%s REWRITTEN: %s",
+                            task.id, validation.message[:80],
+                        )
+                        message = validation.message
+                        # Persist rewritten text in the task payload
+                        from infrastructure.autonomy.task_queue import update_task_payload_message
+                        async with get_db_session() as _db:
+                            await update_task_payload_message(_db, task.id, message)
+                except Exception as exc:
+                    logger.warning(
+                        "[scheduled_push] validator failed for task_id=%s, proceeding with original: %s",
+                        task.id, exc,
+                    )
+            else:
+                logger.debug("[scheduled_push] no api_key — skipping LLM validation for task_id=%s", task.id)
+
+            # Phase 3: send via Pushy
             from infrastructure.pushy.client import get_client
             from infrastructure.settings_store import load_settings as _ls
             _s = _ls()
@@ -99,12 +131,5 @@ async def run_due(account_id: str) -> None:
             else:
                 logger.warning("[scheduled_push] Pushy not configured (api_key or device_token missing), skipping push task_id=%s", task.id)
 
-            # Phase 3: persist in chat history
+            # Phase 4: persist in chat history
             await save_push_message(account_id=account_id, text=message)
-
-            # Phase 4: log to workbench
-            from infrastructure.autonomy import workbench as wb
-            _lang = detect_lang(message)
-            _preview = message[:60] + ("…" if len(message) > 60 else "")
-            _pfx = "Отправил сообщение" if _lang == "ru" else "Sent message"
-            wb.append(account_id, f"{_pfx}: «{_preview}»")

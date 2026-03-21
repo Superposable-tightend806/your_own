@@ -162,6 +162,25 @@ async def get_due_tasks(db: AsyncSession, account_id: str) -> list[AutonomyTask]
     return list(result.scalars().all())
 
 
+async def update_task_payload_message(db: AsyncSession, task_id: str, new_text: str) -> None:
+    """Replace the ``message`` field inside the payload of any task (any status).
+
+    Used by the push validator to persist the rewritten text before delivery.
+    """
+    import json as _json
+    result = await db.execute(select(AutonomyTask).where(AutonomyTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        return
+    try:
+        pd = _json.loads(task.payload) if task.payload else {}
+        pd["message"] = new_text
+        task.payload = _json.dumps(pd, ensure_ascii=False)
+    except Exception:
+        task.payload = _json.dumps({"message": new_text}, ensure_ascii=False)
+    await db.commit()
+
+
 async def mark_done(db: AsyncSession, task_id: str) -> None:
     await db.execute(
         update(AutonomyTask)
