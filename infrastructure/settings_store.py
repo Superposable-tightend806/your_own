@@ -18,6 +18,8 @@ _SOUL_FILE = _DATA_DIR / "soul.md"
 
 DEFAULT_MODEL = "anthropic/claude-opus-4.6"
 
+TIME_FMT = "%Y-%m-%d %H:%M"
+
 _DEFAULTS: dict[str, object] = {
     "openrouter_api_key": "",
     "model": DEFAULT_MODEL,
@@ -54,6 +56,11 @@ def get_user_tz() -> ZoneInfo:
 def now_local() -> datetime:
     """Return current time in the user's local timezone."""
     return datetime.now(get_user_tz())
+
+
+def now_local_str() -> str:
+    """Return current local time formatted as ``YYYY-MM-DD HH:MM``."""
+    return now_local().strftime(TIME_FMT)
 
 
 def local_to_utc(naive_dt: datetime) -> datetime:

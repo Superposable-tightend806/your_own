@@ -42,7 +42,7 @@ from infrastructure.memory.retrieval import humanize_timestamp
 from infrastructure.memory.chroma_pipeline import get_chroma_pipeline
 from infrastructure.auth import require_auth
 from infrastructure.autonomy import workbench as wb
-from infrastructure.settings_store import now_local
+from infrastructure.settings_store import now_local_str
 from infrastructure.skills import registry as skill_registry
 from infrastructure.skills.base import SkillContext
 from settings import settings
@@ -401,7 +401,7 @@ async def chat(
             logger.warning("[chat] Chroma retrieval failed: %s", exc)
 
     # Current time for SCHEDULE_MESSAGE and general awareness
-    _now_str = now_local().strftime("%Y-%m-%d %H:%M")
+    _now_str = now_local_str()
 
     # Recent workbench entries for context
     _recent_wb = wb.get_recent_entries(account_id or "default")

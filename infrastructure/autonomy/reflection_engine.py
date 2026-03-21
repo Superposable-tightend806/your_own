@@ -489,8 +489,8 @@ async def run(account_id: str, api_key: str) -> None:
         recent_tasks = await get_recent_tasks(db, account_id, hours=24)
         pending_tasks_block = _build_pending_tasks_block(lang, recent_tasks)
 
-        from infrastructure.settings_store import now_local
-        now_str = now_local().strftime("%Y-%m-%d %H:%M")
+        from infrastructure.settings_store import now_local_str
+        now_str = now_local_str()
 
         awakening_system = _build_awakening_system(
             ai_name=ai_name,

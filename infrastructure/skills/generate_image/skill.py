@@ -7,7 +7,7 @@ from pathlib import Path
 
 from infrastructure.skills.base import SkillBase, SkillContext, SkillResult
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _GENERATED_IMAGES_DIR = _PROJECT_ROOT / "generated_images"
 _GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 

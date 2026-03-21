@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
 
@@ -83,7 +83,8 @@ def parse_entries(content: str) -> list[tuple[str, str]]:
 
 def append(account_id: str, text: str) -> None:
     """Append a timestamped note to the workbench."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    from infrastructure.settings_store import now_local_str
+    ts = now_local_str()
     path = _path(account_id)
     with _lock:
         if not path.exists() or path.stat().st_size == 0:
@@ -141,12 +142,14 @@ def get_stale_entries(account_id: str) -> list[tuple[str, str]]:
     if not content:
         return []
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
+    from infrastructure.settings_store import now_local, get_user_tz, TIME_FMT
+    cutoff = now_local() - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
+    tz = get_user_tz()
     stale: list[tuple[str, str]] = []
 
     for ts_str, body in parse_entries(content):
         try:
-            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            ts = datetime.strptime(ts_str, TIME_FMT).replace(tzinfo=tz)
         except ValueError:
             continue
         if ts < cutoff:
@@ -161,13 +164,15 @@ def remove_stale(account_id: str) -> None:
     if not content:
         return
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
+    from infrastructure.settings_store import now_local, get_user_tz, TIME_FMT
+    cutoff = now_local() - timedelta(hours=WORKBENCH_MAX_AGE_HOURS)
+    tz = get_user_tz()
     entries = parse_entries(content)
 
     kept: list[tuple[str, str]] = []
     for ts_str, body in entries:
         try:
-            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            ts = datetime.strptime(ts_str, TIME_FMT).replace(tzinfo=tz)
         except ValueError:
             kept.append((ts_str, body))
             continue

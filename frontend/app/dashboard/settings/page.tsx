@@ -21,7 +21,8 @@ const MODELS = [
   { id: "meta-llama/llama-4-scout",    label: "Llama 4 Scout",     vision: false },
   { id: "google/gemini-3-pro-preview", label: "Gemini 3 Pro Preview", vision: false },
   { id: "qwen/qwen3-max",              label: "Qwen 3",            vision: false },
-  { id: "deepseek/deepseek-v3.2",     label: "Deepseek V3.2",     vision: false },
+  { id: "deepseek/deepseek-v3.2-exp", label: "Deepseek V3.2 Exp", vision: false },
+  { id: "xiaomi/mimo-v2-pro",         label: "MiMo V2 Pro",       vision: false },
   { id: "mistralai/mistral-large",    label: "Mistral Large",     vision: false },
 ] as const;
 

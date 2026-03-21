@@ -28,7 +28,7 @@ from infrastructure.autonomy.cmd_parser import (
 )
 from infrastructure.autonomy.helpers import detect_lang, get_ai_name, make_llm_client, save_push_message
 from infrastructure.llm.prompt_loader import get_prompt
-from infrastructure.settings_store import now_local
+from infrastructure.settings_store import now_local_str
 
 from infrastructure.logging.logger import setup_logger
 
@@ -205,7 +205,7 @@ async def run_post_analysis(
     Fires in the background after the chat stream ends — zero latency for the user.
     """
     ai_name = get_ai_name()
-    now_str = now_local().strftime("%Y-%m-%d %H:%M")
+    now_str = now_local_str()
 
     message_history = _format_history(recent_pairs, current_user_text, current_assistant_text)
     lang = detect_lang(message_history)
